@@ -16,7 +16,7 @@ MYNAME="$(basename "${BASH_SOURCE[0]}")"
 
 usage() {
     cat << EOF
-    ./$(MYNAME) [option] master_host master_port
+    ./${MYNAME} [option] master_host master_port
 EOF
 }
 
