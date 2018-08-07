@@ -11,15 +11,14 @@
 
 2. pg:
 
-    描述：在`centos@6.8`基础上安装pg9.6并初始化数据库，配置文件允许远程主机连接，启动数据库。
+    描述：在`pg-base`基础上初始化数据库。
 
     编译命令：`docker build --rm -t pg -f Dockerfiles/init.Dockerfile .`
-
 
 实践
 ===
 
-PITR 恢复
+PIT 恢复
 ---
 
 首先，创建一个docker volume用来存放归档WAL文件：
@@ -81,7 +80,13 @@ PITR 恢复
     < 2018-08-05 14:15:24.799 UTC > LOG:  redirecting log output to logging collector process                                       
     < 2018-08-05 14:15:24.799 UTC > HINT:  Future log output will appear in directory "pg_log".                                     
 
-    TODO: 貌似改动并没有被恢复，不知道哪一步出错了。。。
+验证内容：
+
+	[root@eb6f6a9c8191 pitr]# su postgres -c "psql -c 'select * from foo;'"
+				 t                                                         
+	----------------------------                                           
+	 2018-08-07 03:38:18.064691                                            
+	(1 row)                                                                
 
 结束后，停止/删除两个容器，并且删除volume：
 

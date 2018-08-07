@@ -83,23 +83,37 @@ do_basebackup() {
     OLD_IFS="$IFS"
     IFS=""
     local counter=0
+
+    ## test purpose
+    #(
+    #    echo "create table y${id:0:5}(s varchar)" | _psql
+    #)
+
+    local log_file="/tmp/$id"
     {
         # 1. start backup 
-        # 2. backup data dir (with some exclusions)
+        # 1.5 wait start backup finish
+        # 2. backup data dir
         # 3. stop backup
         # 4. write output of stop backup function into backup lable file (and table spacemap file)
         # 5. create a restore point named after backup_id
 
         echo "select pg_start_backup('$id', false, false);"
+        echo "select 'start_backup_ok';"
 
-        rsync --delete -az --exclude "pg_replslot/*" \
-                           --exclude "pg_xlog/*" \
-                           --exclude "postmaster.pid" \
-                           --exclude "postmaster.opts" \
-                            "$PGDATA/" "$BACKUP_BASEBACKUP_DIR/$id" &> /dev/null
+        ## test purpose
+        #(
+        #    echo "create table x${id:0:5}(s varchar)" | _psql &> /dev/null
+        #)
+
+        # backup data directory (via rsync)
+        while ! { [[ -f "$log_file" ]] && grep -q "start_backup_ok" "$log_file"; }; do
+            sleep 1
+        done
+        rsync --delete -azc "$PGDATA/" "$BACKUP_BASEBACKUP_DIR/$id" &> /dev/null
 
         echo "select * from pg_stop_backup(false);"
-    } | _psql -A 2>/dev/null | sed -n '1,/lsn|labelfile|spcmapfile/!p' | while read -r -d "|" line; do
+    } | _psql -A 2>/dev/null | stdbuf -o0 tee -a "$log_file" | sed -n '1,/lsn|labelfile|spcmapfile/!p' | while read -r -d "|" line; do
         case $counter in
             1)
                 echo "$line" > "$BACKUP_BASEBACKUP_DIR/$id/backup_label"
@@ -127,8 +141,12 @@ do_recover() {
     # stop server if running
     _pg_ctl status && _pg_ctl stop
 
-    # fill PGDATA with basebackup
-    rsync -az --delete "$basebackup_dir/" "$PGDATA"
+    # fill PGDATA with basebackup (with some exclusions)
+    rsync --delete -azc --exclude "pg_replslot/*" \
+                        --exclude "pg_xlog/*" \
+                        --exclude "postmaster.pid" \
+                        --exclude "postmaster.opts" \
+                        "$basebackup_dir/" "$PGDATA"
 
     # create an recovery.conf file in
     cat << EOF > $PGDATA/recovery.conf
@@ -137,6 +155,7 @@ recovery_target_name = '${id}'
 EOF
     chown postgres:postgres $PGDATA/recovery.conf
 
+    diff -r $PGDATA $basebackup_dir > /tmp/diff.log
     # start server
     _pg_ctl start
 }
