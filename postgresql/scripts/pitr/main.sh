@@ -10,33 +10,7 @@
 
 MYDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MYNAME=$(basename "${BASH_SOURCE[0]}")
-source $MYDIR/colorfy_log.sh
-
-die() {
-    error "$1" >&2
-    exit 1
-}
-
-run_as_postgres() {
-    pushd /tmp > /dev/null
-    cmd=("$1")
-    shift
-    for i in "$@"; do
-        cmd+=(" \"$i\"")
-    done
-    su postgres -c "eval ${cmd[*]}"
-    ret=$?
-    popd > /dev/null
-    return $ret
-}
-
-_psql() {
-    run_as_postgres psql "$@"
-}
-
-_pg_ctl() {
-    run_as_postgres pg_ctl "$@"
-}
+source $MYDIR/../common.sh
 
 # setup continuous archiving before DB is started
 setup_continuous_archive() {
@@ -50,17 +24,6 @@ setup_continuous_archive() {
 ensure_backup_dir() {
     [[ -d "$BACKUP_BASEBACKUP_DIR" ]] || { mkdir "$BACKUP_BASEBACKUP_DIR" && chown postgres:postgres "$BACKUP_BASEBACKUP_DIR"; }
     [[ -d "$BACKUP_ARCHIVE_DIR" ]] || { mkdir "$BACKUP_ARCHIVE_DIR" && chown postgres:postgres "$BACKUP_ARCHIVE_DIR"; }
-}
-
-manipulate_db() {
-    out=$(_psql -t -c "select tablename from pg_tables where tablename='foo'")
-    [[ -z $out ]] && _psql -c "create table foo(i timestamp);"
-    local i=0
-    while (( $i < 10 )); do
-        (( i++ ))
-        _psql -c "insert into foo values(LOCALTIMESTAMP);"
-        sleep 1
-    done
 }
 
 do_start() {

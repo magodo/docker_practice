@@ -6,40 +6,6 @@
 # Description:
 #########################################################################
 
-MYDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"&& pwd)"
-MYNAME="$(basename "${BASH_SOURCE[0]}")"
-
-# shellcheck disable=SC1090
-. "$MYDIR"/utils.sh
-# shellcheck disable=SC1090
-. "$MYDIR"/conf.sh
-
-usage() {
-    cat << EOF
-    ./${MYNAME} [option] standby_ip
-EOF
-}
-
-# must run using postgres user
-[[ "$(whoami)" != postgres ]] && die "effective user is not postgres"
-
-while :; do
-    case $1 in
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        --)
-            shift
-            break
-            ;;
-        *)
-            break
-            ;;
-    esac
-    shift
-done
-
 standby_ip=$1
 [[ -z $standby_ip ]] && die "please specify ip of standby server"
 

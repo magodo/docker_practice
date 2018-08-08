@@ -6,6 +6,10 @@
 # Description:
 #########################################################################
 
+#########################################################################
+# LOG
+#########################################################################
+
 log() {
     level=$1
     shift
@@ -42,17 +46,59 @@ log() {
 
 error() {
     # $@ can't be quoted, otherwise it will be passed as an empty string argument to log
-    log error $@
+    log error "$@"
 }
 
 warn() {
-    log warn $@
+    log warn "$@"
 }
 
 info() {
-    log info $@
+    log info "$@"
 }
 
 debug() {
-    log debug $@
+    log debug "$@"
+}
+
+#########################################################################
+# HELPERS
+#########################################################################
+
+die() {
+    error "$@" >&2
+    exit 1
+}
+
+run_as_postgres() {
+    pushd /tmp > /dev/null
+    cmd=("$1")
+    shift
+    for i in "$@"; do
+        cmd+=(" \"$i\"")
+    done
+    su postgres -c "eval ${cmd[*]}"
+    ret=$?
+    popd > /dev/null
+    return $ret
+}
+
+_psql() {
+    run_as_postgres psql "$@"
+}
+
+_pg_ctl() {
+    run_as_postgres pg_ctl "$@"
+}
+
+##
+# ensure specified line in specified file
+# $1: line
+# $2: file
+line_in_file() {
+    line="$1"
+    file="$2"
+    if ! grep -qE "^$line\$" "$file"; then
+        echo "$line" >> "$file"
+    fi
 }
