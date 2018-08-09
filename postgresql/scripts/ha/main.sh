@@ -10,7 +10,7 @@ MYDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"&& pwd)"
 MYNAME="$(basename "${BASH_SOURCE[0]}")"
 
 # shellcheck disable=SC1090
-. "$MYDIR"/actions.sh
+. "$MYDIR"/action.sh
 
 usage() {
     cat << EOF
@@ -71,3 +71,5 @@ main() {
     esac
     exit 0
 }
+
+main "$@"

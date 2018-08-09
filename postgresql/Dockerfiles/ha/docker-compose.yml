@@ -7,6 +7,11 @@ x-service:
     stdin_open: true
     ports:
         - "5432"
+    volumes:
+        - type: bind
+          source: ./scripts
+          target: ${SCRIPT_ROOT}
+          read_only: true
     env_file: .env
 
 services:
@@ -24,7 +29,7 @@ services:
         <<: *default-service
         hostname: p2
         networks:
-            - internal_net
+            internal_net:
 
 networks:
     # internal network for primary-standby replication
