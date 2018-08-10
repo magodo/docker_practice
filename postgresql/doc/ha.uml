@@ -1,0 +1,67 @@
+@startuml
+title High Availablity Solution
+
+actor Evil
+actor User
+
+box "HA" #LightBlue
+    database db1
+    database db2
+end box
+participant sentinel
+database mgrdb
+participant alarm
+
+group start
+    User -> db1
+    db1 -> db1: - setup postgresql.conf\n- create replication user/slot\n- create admin user\n - start server
+    db1 -> db2: pg_basebackup
+    db2 -> db2: start server
+end
+
+group standby down
+    Evil -> db2: bad thing
+    opt sync replication
+        |||
+        sentinel ->x db2: can't ping
+        sentinel -> mgrdb: is this issue first time occur
+        sentinel <-- mgrdb: first or not?
+        opt first time can't ping
+            sentinel -> db1: switch to async replication
+            sentinel -> alarm: STANDBY_DOWN
+        end
+        |||
+        db2 -> db2: comes back somehow
+        db2 -> db1: switch to sync replication
+    end
+end
+
+group primary down
+    Evil -> db1: bad thing
+    |||
+    sentinel ->x db1: can't ping
+    sentinel -> sentinel: check if meets failover condition\n(e.g. the standby is in *streaming mode*)
+    alt failover condition meet
+        sentinel -> alarm: NOT MEET FAILOVER CONDITION
+    else
+        group failover
+            sentinel -> mgrdb: switch role for db1 and db2
+            sentinel -> db2: bind VIP
+            sentinel -> db2: - promote (*standby mode* -> *primary mode*)\n- create replic slot\n- switch to async replication
+        end
+        |||
+        group failback
+            db1 -> db1: comes back somehow
+            db1 -> mgrdb: query current role
+            db1 <-- mgrdb: standby
+            opt maybe needed?
+                db1 -> db1: unbind VIP
+            end
+            db1 -> db1: - stop server if running\n- rewind\n- create recovery.conf\n- start server
+            db1 -> db2: switch to sync replication
+        end
+    end
+end
+
+
+@enduml
