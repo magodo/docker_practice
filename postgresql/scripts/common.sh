@@ -91,6 +91,14 @@ _pg_ctl() {
     run_as_postgres pg_ctl "$@"
 }
 
+_pg_rewind() {
+    run_as_postgres pg_rewind "$@"
+}
+
+_pg_basebackup() {
+    run_as_postgres pg_basebackup "$@"
+}
+
 ##
 # ensure specified line in specified file
 # $1: line

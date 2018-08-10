@@ -15,8 +15,19 @@ SUBNET=172.255.255.0/24
 SCRIPT_ROOT=/opt/scripts
 
 #########################################################################
-# STANDBY
+# REPLICATION
 #########################################################################
-STANDBY_REPL_USER=standby_repl_user
-STANDBY_REPL_PASSWD=123
-STANDBY_REPL_SLOT=standby_repl_slot
+REPL_USER=repl_user
+REPL_PASSWD=123
+REPL_SLOT=repl_slot
+
+#########################################################################
+# SUPER (this is needed for pg_rewind)
+#########################################################################
+SUPER_USER=postgres
+SUPER_PASSWD=123
+
+#########################################################################
+# COMMON
+#########################################################################
+PEER_HOST_RECORD="$PGDATA/peer"

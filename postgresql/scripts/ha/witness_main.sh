@@ -15,11 +15,69 @@ MYNAME="$(basename "${BASH_SOURCE[0]}")"
 . "$MYDIR"/../config.sh
 
 #########################################################################
+# action: start
+#########################################################################
+usage_start() {
+    cat << EOF
+Usage: start [option] [primary_container] [standby_container]
+
+Options:
+    -h, --help
+    -i, --init              setup primary and standby before start
+EOF
+}
+
+do_start() {
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_start
+                exit 0
+                ;;
+            -i|--init)
+                local init=1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    local primary=$1
+    local standby=$2
+    [[ -z $primary ]] && die "missing param: primary"
+    [[ -z $standby ]] && die "missing param: standby"
+
+    if [[ $init = 1 ]]; then
+        primary_host=$(docker exec $primary hostname)
+        standby_host=$(docker exec $standby hostname)
+        docker exec $primary "$SCRIPT_ROOT"/ha/main.sh setup -r primary -p $standby_host
+        docker exec $primary "$SCRIPT_ROOT"/ha/main.sh start -w
+
+        # setup standby needs a running primary (for basebackup)
+        docker exec $standby "$SCRIPT_ROOT"/ha/main.sh setup -r standby -p $primary_host
+        # here we doesn't wait because the semantic of "wait" in pg_ctl(v9.6) means that the server could accept connection,
+        # which is not the case for the warm standby.
+        docker exec $standby "$SCRIPT_ROOT"/ha/main.sh start
+    else
+        docker exec $primary "$SCRIPT_ROOT"/ha/main.sh start
+        docker exec $standby "$SCRIPT_ROOT"/ha/main.sh start
+    fi
+}
+
+#########################################################################
 # action: failover
 #########################################################################
 usage_failover() {
     cat << EOF
 Usage: failover [option] [primary_container] [standby_container]
+
+Description: configure network so that VIP is bound to standby, then promote standby as primary.
 
 Options:
     -h, --help
@@ -53,17 +111,56 @@ do_failover() {
         shift
     done
 
-    local pre_primary=$1
-    local pre_standby=$2
+    local primary=$1
+    local standby=$2
     [[ -z $project ]] && die "missing param: project"
-    [[ -z $pre_primary ]] && die "missing param: primary"
-    [[ -z $pre_standby ]] && die "missing param: standby"
+    [[ -z $primary ]] && die "missing param: primary"
+    [[ -z $standby ]] && die "missing param: standby"
 
-    docker network disconnect ${project}_external_net "$pre_primary"
-    docker network connect --ip "$VIP" ${project}_external_net "$pre_standby"
+    docker network disconnect ${project}_external_net "$primary"
+    docker network connect --ip "$VIP" ${project}_external_net "$standby"
 
-    docker exec "$pre_standby" "$SCRIPT_ROOT"/async/main.sh promote
+    docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh promote
 }
+
+#########################################################################
+# action: failback
+#########################################################################
+usage_failback() {
+    cat << EOF
+Usage: failback [option] [failbackup_container]
+
+Options:
+    -h, --help
+EOF
+}
+
+do_failback() {
+    local project
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_failback
+                exit 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    local failback_container=$1
+    
+    [[ -z $failback_container ]] && die "missing param: failback_container"
+
+    docker exec "$failback_container" "$SCRIPT_ROOT"/ha/main.sh rewind
+}
+
 
 #########################################################################
 # main
@@ -77,6 +174,7 @@ Options:
     -h, --help
 
 Actions:
+    start               start primary and standby
     failover            remove primary from current network and promote current standby as new primary
     failback            revoke previous primary as standby following new primary
 EOF
@@ -105,6 +203,9 @@ main() {
     shift
     
     case $action in
+        "start")
+            do_start "$@"
+            ;;
         "failover")
             do_failover "$@"
             ;;

@@ -14,7 +14,7 @@ MYNAME="$(basename "${BASH_SOURCE[0]}")"
 . "$MYDIR"/../config.sh
 
 #########################################################################
-# start
+# action: start
 #########################################################################
 
 usage_start() {
@@ -23,15 +23,20 @@ Usgae: start [options]
 
 Options:
     -h, --help
+    -w, --wait          wait until server is started
 EOF
 }
 
 do_start() {
+    local options=()
     while :; do
         case $1 in
             -h|--help)
                 usage_start
                 exit 0
+                ;;
+            -w|--wait)
+                options+=("-w")
                 ;;
             --)
                 shift
@@ -44,7 +49,10 @@ do_start() {
         shift
     done
     
-    _pg_ctl start
+    # docker exec will hang if there is no EOF sent to docker-exec
+    # from the forked postgres process, which means the docker-exec
+    # is keeping reading from the pipe
+    _pg_ctl "${options[@]}" start > /dev/null
 }
 
 #########################################################################
@@ -96,36 +104,36 @@ Options:
 EOF
 }
 
+ensure_replication_slot() {
+    cat << EOF | _psql
+DO
+\$do\$
+BEGIN
+IF NOT EXISTS(
+    SELECT
+    FROM pg_catalog.pg_replication_slots
+    WHERE slot_name = '$REPL_SLOT') THEN
+
+    PERFORM pg_create_physical_replication_slot('$REPL_SLOT');
+END IF;
+END
+\$do\$;
+EOF
+}
+
 # Usage: do_setup_primary [options] peer
-# Options:
-#   --no-user           do not create replication user (mainly used for setup on standby)
-#   --no-slot           do not create replication slot (mainly used for setup on standby)
 do_setup_primary() {
-    while :; do
-        case $1 in
-            --no-user)
-                local no_user=1
-                ;;
-            --no-slot)
-                local no_slot=1
-                ;;
-            --)
-                shift
-                break
-                ;;
-            *)
-                break
-                ;;
-        esac
-        shift
-    done
     local peer=$1
+    echo "$peer" > "$PEER_HOST_RECORD"
+    chown postgres:postgres "$PEER_HOST_RECORD"
+
     # Here we resolve hostname into ip address is because if pg_hba.conf support hostname only
     # when the hostname could be forward resolved to client ip and the client ip could be backward
     # resolved into hostname.
     # However, using docker-compose setup with `hostname` set for each service, it seems only possible
     # to forward resolve, but backward resolve the ip get a "low-level" name...
     local peer_ipv4="$(getent ahostsv4 $peer | grep "STREAM $peer" | cut -d' ' -f 1)"
+    local my_ipv4="$(getent ahostsv4 "$(hostname)" | grep "STREAM" | grep -v $VIP | cut -d' ' -f 1)"
 
     ##################################
     # server setting
@@ -135,64 +143,64 @@ do_setup_primary() {
     sed -i "s;#max_wal_senders = 0;max_wal_senders = 5;" "${PGDATA}"/postgresql.conf
     sed -i "s;#listen_addresses = 'localhost';listen_addresses = '*';" "${PGDATA}"/postgresql.conf
     sed -i 's;#max_replication_slots = 0;max_replication_slots = 5;' "${PGDATA}"/postgresql.conf
+    sed -i 's;#wal_log_hints = off;wal_log_hints = on;' "${PGDATA}"/postgresql.conf
+    sed -i 's;#wal_keep_segments = 0;wal_keep_segments = 64;' "${PGDATA}"/postgresql.conf
 
     ##################################
     # run-time setting
     ##################################
 
-    if [[ $no_user != 1 ]] || [[ $no_slot != 1 ]]; then
-        # need a running server to setup
-        _pg_ctl start -w
+    # need a running server to setup
+    _pg_ctl start -w
 
-        if [[ $no_user != 1 ]]; then
-            # create a dedicated user for replication
-            cat << EOF | _psql
+    # create a replication account
+    cat << EOF | _psql
+DO
+\$do\$
+BEGIN
+IF NOT EXISTS(
+    SELECT
+    FROM pg_catalog.pg_roles
+    WHERE rolname = '$REPL_USER') THEN
+
+    CREATE ROLE $REPL_USER WITH LOGIN REPLICATION PASSWORD '$REPL_PASSWD';
+END IF;
+END
+\$do\$;
+EOF
+
+    ensure_replication_slot
+
+    # ensure a super user for pg_rewind
+    cat << EOF | _psql
 DO
 \$do\$
 BEGIN
     IF NOT EXISTS(
         SELECT
         FROM pg_catalog.pg_roles
-        WHERE rolname = '$STANDBY_REPL_USER') THEN
+        WHERE rolname = '$SUPER_USER') THEN
 
-        CREATE ROLE $STANDBY_REPL_USER WITH LOGIN REPLICATION PASSWORD '$STANDBY_REPL_PASSWD';
+        CREATE ROLE $SUPER_USER WITH LOGIN REPLICATION PASSWORD '$SUPER_PASSWD';
+    ELSE
+        ALTER ROLE $SUPER_USER WITH PASSWORD '$SUPER_PASSWD';
     END IF;
 END
 \$do\$;
 EOF
-        fi
 
-        if [[ $no_slot != 1 ]]; then
-            # create a replication slot for standby
-            cat << EOF | _psql
-DO
-\$do\$
-BEGIN
-    IF NOT EXISTS(
-        SELECT
-        FROM pg_catalog.pg_replication_slots
-        WHERE slot_name = '$STANDBY_REPL_SLOT') THEN
-
-        PERFORM pg_create_physical_replication_slot('$STANDBY_REPL_SLOT');
-    END IF;
-END
-\$do\$;
-EOF
-            echo "" | _psql
-        fi
-
-        # stop server once finished
-        _pg_ctl stop -w
-    fi
+    # stop server once finished
+    _pg_ctl stop -w
 
     ##################################
     # access right setting
     ##################################
-    line_in_file "host    replication      ${STANDBY_REPL_USER}      ${peer_ipv4}/32      md5" "${PGDATA}"/pg_hba.conf
+    line_in_file "host    replication      ${REPL_USER}      ${peer_ipv4}/32    md5" "${PGDATA}"/pg_hba.conf
+    line_in_file "host    replication      ${REPL_USER}      ${my_ipv4}/32      md5" "${PGDATA}"/pg_hba.conf
+    line_in_file "host    all              ${SUPER_USER}     0.0.0.0/0          md5" "${PGDATA}"/pg_hba.conf
     # this allow user "postgres" to access all db without password,
     # this is just to provide an easy way for client to access db via vip, test purpose only
-    line_in_file "host    all      postgres      0.0.0.0/0      trust" "${PGDATA}"/pg_hba.conf
-
+    line_in_file "host    all              postgres          0.0.0.0/0          trust" "${PGDATA}"/pg_hba.conf
 }
 
 do_setup_standby() {
@@ -202,7 +210,7 @@ do_setup_standby() {
     # prepare basebackup
     ##################################
     rm -rf "${PGDATA}"
-    run_as_postgres pg_basebackup  -D "$PGDATA" -F p -R -S "$STANDBY_REPL_SLOT" -X stream -c fast -d "postgresql://$STANDBY_REPL_USER:$STANDBY_REPL_PASSWD@$peer?application_name=app_$(hostname)"
+    _pg_basebackup  -D "$PGDATA" -F p -R -S "$REPL_SLOT" -X stream -c fast -d "postgresql://$REPL_USER:$REPL_PASSWD@$peer?application_name=app_$(hostname)"
 
     ##################################
     # setup recovery.conf
@@ -212,9 +220,8 @@ do_setup_standby() {
     # - primary_conninfo
     # - primary_slot_name
     # generally, we need no more settings.
-    
-    # since this standby might later become primary, hence we should do primary setup also
-    do_setup_primary --no-user --no-slot "$1"
+
+    echo "$peer" > "$PEER_HOST_RECORD"
 }
 
 do_setup() {
@@ -280,7 +287,8 @@ EOF
 }
 
 do_promote() {
-    # FIXME: need a way to guarantee the invoking db is standby 
+    # FIXME: add some guard
+
     _pg_ctl status &>/dev/null || die "only running standby is able to be promoted"
 
     while :; do
@@ -300,5 +308,83 @@ do_promote() {
         shift
     done
 
-    _pg_ctl promote 
+    _pg_ctl promote || die "promote failed"
+
+    # wait until promoted cluster is running
+    if ! timeout 10 bash -c '{
+        while :; do
+            su postgres -c "psql -c \"select;\"" &> /dev/null && exit 0
+            sleep 1
+        done
+    }'; then
+        die "promoted cluster starting timeout"
+    fi
+
+    ensure_replication_slot
+}
+
+#########################################################################
+# action: rewind
+#########################################################################
+
+usage_rewind() {
+    cat << EOF
+Usgae: rewind [options]
+
+Options:
+    -h, --help
+EOF
+}
+
+do_rewind() {
+    # FIXME: add some guard
+
+    _pg_ctl status &>/dev/null && _pg_ctl -w stop
+
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_rewind
+                exit 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    ##########################
+    # rewind
+    ##########################
+
+    # get peer identity
+    peer=$(cat "$PEER_HOST_RECORD")
+
+    # rewind data directory, which results into a nearly synced data directory as source cluster
+    # with the gap (WAL) defined as a backup label, which will be filled up once started.
+    _pg_rewind -D "$PGDATA" --source-server="postgresql://$SUPER_USER:$SUPER_PASSWD@$peer/postgres" || exit 1
+
+    # pg_rewind will sync target data dir with source server's data dir, hence the peer host record file will be overriden
+    # we should modify it to modify it
+    echo $peer > "$PEER_HOST_RECORD"
+
+    ##########################
+    # prepare recovery.conf
+    ##########################
+    # since we are going to act as a standby after start,
+    # we need to define a recovery.conf
+    cat << EOF > "$PGDATA"/recovery.conf
+standby_mode = 'on'
+recovery_target_timeline = 'latest'
+primary_conninfo = 'postgresql://$REPL_USER:$REPL_PASSWD@$peer/postgres?application_name=app_$(hostname)'
+primary_slot_name = '$REPL_SLOT'
+EOF
+    chown postgres:postgres "$PGDATA"/recovery.conf
+
+    _pg_ctl start > /dev/null
 }

@@ -92,3 +92,100 @@ PIT 恢复
 
     $ docker stop test test_rec
     $ docker volume rm my-vol
+
+Failover && Failback
+---
+
+首先，进入*Dockerfiles/ha*，该目录下的内容有：
+
+1. *scripts*目录的link，用于启动service的时候做`bind mount`
+2. *.env*文件，指向*scripts/config.sh*，用于启动service的时候读取环境变量
+3. *docker-compose.yml*，用于启动两个service：primary和standby，用来跑DB服务
+
+这里的*docker-compose.yml*还会创建两个网络，一个是用于primary和standby内部通信（用于复制，rewind, basebackup等操作）；一个是用于接收外界pg客户端请求，这个网络只提供一个特定的IP：`VIP`，它会在failover的时候绑定到新的primary上。
+
+在*Dockerfiles/ha*目录下执行以下指令启动两个服务：
+
+    💤  ha [master] ⚡  cd Dockerfiles/ha
+    💤  ha [master] ⚡  docker-compose up -d
+
+在host环境下通过*scripts/ha/witness_main.sh*来进行各种操作。
+
+    💤  ha [master] ⚡  cd scripts/ha
+
+首先，配置主从并且启动它们：
+
+    💤  ha [master] ⚡  ./witness_main.sh start -h
+    Usage: start [option] [primary_container] [standby_container]
+
+    Options:
+        -h, --help
+        -i, --init              setup primary and standby before start
+
+    💤  ha [master] ⚡  ./witness_main.sh start -i ha_p1_1 ha_p2_1
+    waiting for server to start....< 2018-08-10 09:47:05.453 UTC > LOG:  redirecting log output to logging collector process
+    < 2018-08-10 09:47:05.453 UTC > HINT:  Future log output will appear in directory "pg_log".
+     done
+    server started
+    DO
+    DO
+    DO
+    waiting for server to shut down.... done
+    server stopped
+
+（这里的输出不用理会哈...）
+
+然后，可以另开一个窗口模拟用户访问DB：
+
+    💤  colors [master] ⚡  psql -h 172.255.255.254 -U postgres
+    Password for user postgres:
+    psql (10.4, server 9.6.9)
+    Type "help" for help.
+
+    postgres=# create table a(i int);
+    CREATE TABLE
+
+（postgres的密码是: 123）
+
+接下来，模拟**failover**操作：
+
+    💤  ha [master] ⚡  ./witness_main.sh failover -h
+    Usage: failover [option] [primary_container] [standby_container]
+
+    Description: configure network so that VIP is bound to standby, then promote standby as primary.
+
+    Options:
+        -h, --help
+        -p, --project           docker-compose project
+
+    💤  ha [master] ⚡  ./witness_main.sh failover -p ha ha_p1_1 ha_p2_1
+    server promoting
+    DO
+
+此时，`ha_p2_1`获得了VIP，并且进入**primary mode**，向外提供服务。
+
+容灾之后，当`ha_p1_1`重新恢复服务之后，需要对它进行**failback**操作，以使之成为`ha_p2_1`的standby：
+
+    💤  ha [master] ⚡  ./witness_main.sh failback -h
+    Usage: failback [option] [failbackup_container]
+
+    Options:
+        -h, --help
+
+    💤  ha [master] ⚡  ./witness_main.sh failback ha_p1_1
+    waiting for server to shut down.... done
+    server stopped
+    servers diverged at WAL position 0/3015FE8 on timeline 1
+    rewinding from last common checkpoint at 0/2000060 on timeline 1
+    Done!
+
+最后，在完成实践后关闭容器和相关的资源（网络，存储）：
+
+    💤  ha [master] ⚡  cd Dockerfiles/ha
+    💤  ha [master] ⚡  docker-compose down
+    Stopping ha_p2_1 ... done        
+    Stopping ha_p1_1 ... done        
+    Removing ha_p2_1 ... done        
+    Removing ha_p1_1 ... done        
+    Removing network ha_internal_net 
+    Removing network ha_external_net 
