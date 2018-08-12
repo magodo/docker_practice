@@ -7,13 +7,19 @@
 
     描述：在`centos@6.8`基础上安装pg9.6以及一些开发包，但是并不初始化DB
 
-    编译命令：`docker build --rm -t pg-base -f Dockerfiles/base.Dockerfile .`
+    编译命令：`docker build --rm -t pg-base -f base.Dockerfile .`
 
 2. pg:
 
     描述：在`pg-base`基础上初始化数据库。
 
-    编译命令：`docker build --rm -t pg -f Dockerfiles/init.Dockerfile .`
+    编译命令：`docker build --rm -t pg -f init.Dockerfile .`
+
+3. repmgr
+
+    描述：在`pg`基础上，加入了repmgr包以及它的`switchover`功能所依赖的ssh
+
+    编译命令：`docker build --rm -t repmgr -f repmgr.Dockerfile --build-arg PUBLIC_KEY="$(cat ~/.ssh/id_rsa.pub)" --build-arg PRIVATE_KEY="$(cat ~/.ssh/id_rsa)" .`
 
 实践
 ===

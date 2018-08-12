@@ -99,6 +99,10 @@ _pg_basebackup() {
     run_as_postgres pg_basebackup "$@"
 }
 
+_repmgr() {
+    run_as_postgres repmgr "$@"
+}
+
 ##
 # ensure specified line in specified file
 # $1: line

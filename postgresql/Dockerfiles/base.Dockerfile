@@ -12,4 +12,4 @@ ENV PATH /usr/pgsql-${pgversion}/bin:$PATH
 EXPOSE 5432
 
 # start db
-ENTRYPOINT ["/bin/bash"]
+CMD ["/bin/bash"]

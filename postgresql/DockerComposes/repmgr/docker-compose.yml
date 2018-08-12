@@ -1,0 +1,44 @@
+version: "3.6"
+
+x-service:
+    &default-service
+    image: "repmgr"
+    tty: true
+    stdin_open: true
+    ports:
+        - "5432"
+    volumes:
+        - type: bind
+          source: ./scripts
+          target: ${SCRIPT_ROOT}
+          read_only: true
+    env_file: .env
+
+services:
+    # the primary cluster (but might switch)
+    node1:
+        <<: *default-service
+        hostname: node1
+        networks:
+            internal_net:
+            external_net:
+                ipv4_address: "${VIP}"
+
+    # the secondary cluster (but might switch)
+    node2:
+        <<: *default-service
+        hostname: node2
+        networks:
+            internal_net:
+
+networks:
+    # internal network for primary-standby replication
+    internal_net:
+        internal: true
+    # external interface, there is always only one ip (VIP) is set for 
+    # the backend, and is bound to the primary db.
+    external_net:
+        driver: bridge
+        ipam:
+            config:
+                - subnet: "${SUBNET}"
