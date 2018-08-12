@@ -24,10 +24,12 @@ Usage: start [option] [primary_container] [standby_container]
 Options:
     -h, --help
     -i, --init              setup primary and standby before start
+    -s, --sync              use sync replication instead of async
 EOF
 }
 
 do_start() {
+    local sync_opt="--async"
     while :; do
         case $1 in
             -h|--help)
@@ -36,6 +38,9 @@ do_start() {
                 ;;
             -i|--init)
                 local init=1
+                ;;
+            -s|--sync)
+                sync_opt="--sync"
                 ;;
             --)
                 shift
@@ -56,11 +61,11 @@ do_start() {
     if [[ $init = 1 ]]; then
         primary_host=$(docker exec $primary hostname)
         standby_host=$(docker exec $standby hostname)
-        docker exec $primary "$SCRIPT_ROOT"/ha/main.sh setup -r primary -p $standby_host
+        docker exec $primary "$SCRIPT_ROOT"/ha/main.sh setup -r primary -p $standby_host ${sync_opt}
         docker exec $primary "$SCRIPT_ROOT"/ha/main.sh start -w
 
         # setup standby needs a running primary (for basebackup)
-        docker exec $standby "$SCRIPT_ROOT"/ha/main.sh setup -r standby -p $primary_host
+        docker exec $standby "$SCRIPT_ROOT"/ha/main.sh setup -r standby -p $primary_host ${sync_opt}
         # here we doesn't wait because the semantic of "wait" in pg_ctl(v9.6) means that the server could accept connection,
         # which is not the case for the warm standby.
         docker exec $standby "$SCRIPT_ROOT"/ha/main.sh start
@@ -161,6 +166,46 @@ do_failback() {
     docker exec "$failback_container" "$SCRIPT_ROOT"/ha/main.sh rewind
 }
 
+#########################################################################
+# action: sync_switch
+#########################################################################
+usage_sync_switch() {
+    cat << EOF
+Usage: sync_switch [option] [primary_container] [sync|async]
+
+Description: switch replication mode between sync and async on primary.
+
+Options:
+    -h, --help
+EOF
+}
+
+do_sync_switch() {
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_sync_switch
+                exit 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    local primary=$1
+    local mode=$2
+    
+    [[ -z $primary ]] && die "missing param: primary_container"
+    [[ -z $mode ]] && die "missing param: repl_mode"
+    docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh sync_switch $mode
+}
+
 
 #########################################################################
 # main
@@ -177,6 +222,7 @@ Actions:
     start               start primary and standby
     failover            remove primary from current network and promote current standby as new primary
     failback            revoke previous primary as standby following new primary
+    sync_switch         switch replication mode between sync and async
 EOF
 }
 
@@ -211,6 +257,9 @@ main() {
             ;;
         "failback")
             do_failback "$@"
+            ;;
+        "sync_switch")
+            do_sync_switch "$@"
             ;;
         *)
             die "Unknwon action: $action!"

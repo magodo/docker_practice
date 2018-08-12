@@ -25,6 +25,7 @@ Actions:
     stop            Stop DB cluster
     promote         Promote a standby into primary
     rewind          Rewind a previous primary into standby following the new primary 
+    sync_switch     Switch replication mode between sync and async on primary
 EOF
 }
 
@@ -64,6 +65,9 @@ main() {
             ;;
         "rewind")
             do_rewind "$@"
+            ;;
+        "sync_switch")
+            do_sync_switch "$@"
             ;;
         *)
             die "Unknwon action: $action!"

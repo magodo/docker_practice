@@ -95,12 +95,15 @@ do_stop() {
 
 usage_setup() {
     cat << EOF
-Usgae: setup [options] [-r|--role=[primary|standby]] [-p|--peer=peer_host]
+Usgae: setup [options] [mandatory options]
 
 Options:
     -h, --help
-    -r, --role ROLE         Setup for which role(either primary or standby)
-    -p, --peer HOST         Peer hostname
+    [--sync|--async]                    Replication mode (by default: --async)
+
+Mandatory Options:
+    -r, --role [primary|standby]        Setup for which role(either primary or standby)
+    -p, --peer HOST                     Peer hostname
 EOF
 }
 
@@ -123,6 +126,26 @@ EOF
 
 # Usage: do_setup_primary [options] peer
 do_setup_primary() {
+    local is_sync
+    while :; do
+        case $1 in
+            --sync)
+                is_sync=1
+                ;;
+            --async)
+                is_sync=""
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
     local peer=$1
     echo "$peer" > "$PEER_HOST_RECORD"
     chown postgres:postgres "$PEER_HOST_RECORD"
@@ -145,6 +168,9 @@ do_setup_primary() {
     sed -i 's;#max_replication_slots = 0;max_replication_slots = 5;' "${PGDATA}"/postgresql.conf
     sed -i 's;#wal_log_hints = off;wal_log_hints = on;' "${PGDATA}"/postgresql.conf
     sed -i 's;#wal_keep_segments = 0;wal_keep_segments = 64;' "${PGDATA}"/postgresql.conf
+
+    # sync replication
+    [[ -n $is_sync ]] && sed -i "s;^#synchronous_standby_names.*;synchronous_standby_names = 'app_$peer';" "${PGDATA}"/postgresql.conf
 
     ##################################
     # run-time setting
@@ -211,6 +237,7 @@ do_setup_standby() {
     ##################################
     rm -rf "${PGDATA}"
     _pg_basebackup  -D "$PGDATA" -F p -R -S "$REPL_SLOT" -X stream -c fast -d "postgresql://$REPL_USER:$REPL_PASSWD@$peer?application_name=app_$(hostname)"
+    # after basebackup, the cofig is synced from primary, which contains necessary configs for primary...
 
     ##################################
     # setup recovery.conf
@@ -227,6 +254,8 @@ do_setup_standby() {
 do_setup() {
     _pg_ctl status &>/dev/null && die "please stop pg first before any setup"
 
+    local role peer
+    local sync_opt="--async"
     while :; do
         case $1 in
             -h|--help)
@@ -249,6 +278,9 @@ do_setup() {
             --peer=?*)
                 peer=${1#=*}
                 ;;
+            --sync)
+                sync_opt='--sync'
+                ;;
             --)
                 shift
                 break
@@ -265,7 +297,7 @@ do_setup() {
 
     case "$role" in
         primary)
-            do_setup_primary "$peer"
+            do_setup_primary "$sync_opt" "$peer"
             ;;
         standby)
             do_setup_standby "$peer"
@@ -387,4 +419,57 @@ EOF
     chown postgres:postgres "$PGDATA"/recovery.conf
 
     _pg_ctl start > /dev/null
+}
+
+#########################################################################
+# action: sync_switch
+#########################################################################
+usage_sync_switch() {
+    cat << EOF
+Usage: sync_switch [option] [primary_container] [sync|async]
+
+Description: switch replication mode between sync and async on primary.
+
+Options:
+    -h, --help
+EOF
+}
+
+do_sync_switch() {
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_sync_switch
+                exit 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+    local mode="$1"
+
+    # get peer identity
+    peer=$(cat "$PEER_HOST_RECORD")
+    local repl_app="app_$peer"
+
+    case $mode in
+        sync)
+            echo "Replaced lines in postgresql.conf:"
+            sed -n "s/^#synchronous_standby_names.*/synchronous_standby_names = 'app_$peer'/gp" "$PGDATA"/postgresql.conf
+            sed -i "s/^#synchronous_standby_names.*/synchronous_standby_names = 'app_$peer'/g" "$PGDATA"/postgresql.conf
+            ;;
+        async)
+            echo "Replaced lines in postgresql.conf:"
+            sed -n 's/\(^synchronous_standby_names.*\)/#\1/gp' "$PGDATA"/postgresql.conf
+            sed -i 's/\(^synchronous_standby_names.*\)/#\1/g' "$PGDATA"/postgresql.conf
+            ;;
+    esac
+    # reload config for running primary
+    _pg_ctl status &>/dev/null && { _pg_ctl reload &> /dev/null || die "pg_ctl reload failed"; }
 }
