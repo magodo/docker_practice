@@ -31,3 +31,13 @@ SUPER_PASSWD=123
 # COMMON
 #########################################################################
 PEER_HOST_RECORD="$PGDATA/peer"
+
+#########################################################################
+# BARMAN
+#########################################################################
+# barman is used for management, it should be created at pg node
+BARMAN_USER=barman
+BARMAN_PASSWD=123
+# barman repl is used for wal streaming, it should be created at pg node
+BARMAN_REPL_USER=barman_repl
+BARMAN_REPL_PASSWD=123

@@ -1,0 +1,6 @@
+argcomplete
+argh >= 0.21.2, <= 0.26.2
+argparse
+psycopg2 >= 2.4.2
+python-dateutil > 2.0, <2.7.0
+setuptools

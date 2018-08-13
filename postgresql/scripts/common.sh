@@ -38,9 +38,9 @@ log() {
         fi
     fi
     if [[ $n_arg = 0 ]]; then
-        { echo -n ${level_color[$level]}; cat; echo -n ${normal}; } >&"${output_fd[$level]}"
+        { echo -n ${level_color[$level]}; cat; echo -n ${normal}; }
     else
-        { echo -n ${level_color[$level]}; echo "$*"; echo -n ${normal}; } >&"${output_fd[$level]}"
+        { echo -n ${level_color[$level]}; echo "$*"; echo -n ${normal}; }
     fi
 }
 

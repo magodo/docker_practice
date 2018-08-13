@@ -150,6 +150,7 @@ do_setup_primary() {
     local peer=$1
     echo "$peer" > "$PEER_HOST_RECORD"
     chown postgres:postgres "$PEER_HOST_RECORD"
+
     # Here we resolve hostname into ip address is because if pg_hba.conf support hostname only
     # when the hostname could be forward resolved to client ip and the client ip could be backward
     # resolved into hostname.
