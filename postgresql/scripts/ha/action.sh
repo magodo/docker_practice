@@ -342,7 +342,7 @@ do_promote() {
 
     _pg_ctl promote || die "promote failed"
 
-    # wait until promoted cluster is running
+    # wait until promoted cluster is running (-w is available since pg-10)
     if ! timeout 10 bash -c '{
         while :; do
             su postgres -c "psql -c \"select;\"" &> /dev/null && exit 0

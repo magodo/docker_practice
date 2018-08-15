@@ -112,7 +112,7 @@ Failover && Failback
 
 在*Dockerfiles/ha*目录下执行以下指令启动两个服务：
 
-    💤  ha [master] ⚡  cd Dockerfiles/ha
+    💤  ha [master] ⚡  cd DockerComposes/ha
     💤  ha [master] ⚡  docker-compose up -d
 
 在host环境下通过*scripts/ha/witness_main.sh*来进行各种操作。
@@ -185,9 +185,19 @@ Failover && Failback
     rewinding from last common checkpoint at 0/2000060 on timeline 1
     Done!
 
+另外，对于运行中/停止的主库，还可以从同步/异步复制模式之间切换：
+
+    💤  ha [master] ⚡  ./witness_main.sh sync_switch -h
+    Usage: sync_switch [option] [primary_container] [sync|async]
+
+    Description: switch replication mode between sync and async on primary.
+
+    Options:
+        -h, --help
+
 最后，在完成实践后关闭容器和相关的资源（网络，存储）：
 
-    💤  ha [master] ⚡  cd Dockerfiles/ha
+    💤  ha [master] ⚡  cd DockerComposes/ha
     💤  ha [master] ⚡  docker-compose down
     Stopping ha_p2_1 ... done        
     Stopping ha_p1_1 ... done        
