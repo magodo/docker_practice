@@ -14,9 +14,10 @@ participant alarm
 
 group start
     User -> db1
-    db1 -> db1: - setup postgresql.conf\n- create replication user/slot\n- create admin user\n - start server
+    db1 -> db1: - setup postgresql.conf\n- setup pg_hba.conf\n- create replication user/slot\n- create admin user(for pg_rewind)\n - start server
     db1 -> db2: pg_basebackup
-    db2 -> db2: start server
+    db2 -> db2: - modify config (server-specific ones)\n- start server
+    db1 -> db1: bind VIP
 end
 
 group standby down
