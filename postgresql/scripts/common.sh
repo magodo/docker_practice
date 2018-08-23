@@ -75,9 +75,9 @@ run_as_postgres() {
     cmd=("$1")
     shift
     for i in "$@"; do
-        cmd+=(" \"$i\"")
+        cmd+=("$i")
     done
-    su postgres -c "eval ${cmd[*]}"
+    sudo -u postgres "${cmd[@]}"
     ret=$?
     popd > /dev/null
     return $ret
