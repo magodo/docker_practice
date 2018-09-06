@@ -345,11 +345,11 @@ do_promote() {
     # wait until promoted cluster is running (-w is available since pg-10)
     if ! timeout 10 bash -c '{
         while :; do
-            su postgres -c "psql -c \"select;\"" &> /dev/null && exit 0
+            pg_isready && exit 0
             sleep 1
         done
     }'; then
-        die "promoted cluster starting timeout"
+        die "promoted cluster failed to accept connection"
     fi
 
     ensure_replication_slot
