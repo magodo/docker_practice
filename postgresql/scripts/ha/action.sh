@@ -403,20 +403,14 @@ do_rewind() {
 
     # pg_rewind will sync target data dir with source server's data dir, hence the peer host record file will be overriden
     # we should modify it to modify it
-    echo $peer > "$PEER_HOST_RECORD"
+    echo "$peer" > "$PEER_HOST_RECORD"
 
     ##########################
     # prepare recovery.conf
     ##########################
-    # since we are going to act as a standby after start,
-    # we need to define a recovery.conf
-    cat << EOF > "$PGDATA"/recovery.conf
-standby_mode = 'on'
-recovery_target_timeline = 'latest'
-primary_conninfo = 'postgresql://$REPL_USER:$REPL_PASSWD@$peer/postgres?application_name=app_$(hostname)'
-primary_slot_name = '$REPL_SLOT'
-EOF
-    chown postgres:postgres "$PGDATA"/recovery.conf
+    mv "$PGDATA"/recovery.done "$PGDATA"/recovery.conf
+    sed -i "s/host=$(hostname)/host=$peer/g" "$PGDATA"/recovery.conf
+    sed -i "s/application_name=app_${peer}/application_name=app_$(hostname)/g" "$PGDATA"/recovery.conf
 
     _pg_ctl start > /dev/null
 }

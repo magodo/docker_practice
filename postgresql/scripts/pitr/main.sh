@@ -43,8 +43,6 @@ do_basebackup() {
 
     done
 
-    OLD_IFS="$IFS"
-    IFS=""
     local counter=0
 
     ## test purpose
@@ -70,6 +68,7 @@ do_basebackup() {
         #)
 
         # backup data directory (via rsync)
+        # this sync point here is to wait for complete of pg_start_backup()
         while ! { [[ -f "$log_file" ]] && grep -q "start_backup_ok" "$log_file"; }; do
             sleep 1
         done
@@ -90,7 +89,6 @@ do_basebackup() {
         ((counter++))
     done
     echo "select pg_create_restore_point('${id}')" | _psql >/dev/null
-    IFS="$OLD_IFS"
     echo "$id"
 }
 
