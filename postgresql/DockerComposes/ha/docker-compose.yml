@@ -2,7 +2,7 @@ version: "3.6"
 
 x-service:
     &default-service
-    image: "pg:9.6"
+    image: "pg"
     tty: true
     stdin_open: true
     ports:

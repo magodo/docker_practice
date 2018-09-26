@@ -72,6 +72,7 @@ die() {
 
 run_as_postgres() {
     pushd /tmp > /dev/null
+    cmd=()
     for i in "$@"; do
         cmd+=(\'"$i"\')
     done
