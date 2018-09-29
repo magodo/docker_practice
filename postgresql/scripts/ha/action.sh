@@ -168,6 +168,8 @@ do_setup_primary() {
     sed -i 's;#max_replication_slots = 0;max_replication_slots = 5;' "${PGDATA}"/postgresql.conf
     sed -i 's;#wal_log_hints = off;wal_log_hints = on;' "${PGDATA}"/postgresql.conf
     sed -i 's;#wal_keep_segments = 0;wal_keep_segments = 64;' "${PGDATA}"/postgresql.conf
+    sed -i 's;#archive_mode = off;archive_mode = on;' "${PGDATA}"/postgresql.conf
+    sed -i "s;#archive_command = '';archive_command = 'cp %p $ARCHIVE_DIR';" "${PGDATA}"/postgresql.conf
 
     # sync replication
     [[ -n $is_sync ]] && sed -i "s;^#synchronous_standby_names.*;synchronous_standby_names = 'app_$peer';" "${PGDATA}"/postgresql.conf
@@ -177,7 +179,7 @@ do_setup_primary() {
     ##################################
 
     # need a running server to setup
-    _pg_ctl start -w
+    _pg_ctl start -w -l "$PGDATA"/start.log
 
     # create a replication account
     cat << EOF | _psql
@@ -227,6 +229,7 @@ EOF
     # this allow user "postgres" to access all db without password,
     # this is just to provide an easy way for client to access db via vip, test purpose only
     line_in_file "host    all              postgres          0.0.0.0/0          trust" "${PGDATA}"/pg_hba.conf
+    line_in_file "local   replication      all                                  trust" "${PGDATA}"/pg_hba.conf
 }
 
 do_setup_standby() {
@@ -466,4 +469,196 @@ do_sync_switch() {
     esac
     # reload config for running primary
     _pg_ctl status &>/dev/null && { _pg_ctl reload &> /dev/null || die "pg_ctl reload failed"; }
+}
+
+#########################################################################
+# action: basebackup
+#########################################################################
+
+usage_basebackup() {
+    cat << EOF
+Usage: basebackup [option]
+
+Description: make a basebackup
+
+Options:
+    -h, --help
+EOF
+}
+
+do_basebackup() {
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_basebackup
+                exit 1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    now_ts=$(date +%s)
+    local this_basebackup_dir="$BASEBACKUP_DIR/$now_ts"
+    mkdir -p "$this_basebackup_dir"
+    chown postgres:postgres "$this_basebackup_dir"
+
+    _pg_basebackup -D "$this_basebackup_dir" -X stream -h /tmp || die "failed to do basebackup"
+    #_pg_basebackup -D "$this_basebackup_dir" -h /tmp || die "failed to do basebackup"
+}
+
+#########################################################################
+# action: recover
+#########################################################################
+
+usage_recover() {
+    cat << EOF
+Usage: recover [option] [-t datetime | -p recover_point] nearest_basebackup
+
+Description: recover to a specified datetime or recovery point (created beforehead)
+
+Options:
+
+    -h, --help
+    -t datetime                         recover to datetime specified
+    -p recover_point                    recover to recovery point specified (which is created before head)
+EOF
+}
+
+do_recover() {
+    local role
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_recover 
+                exit 1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -t)
+                shift
+                recovery_datetime=$1
+                ;;
+            -p)
+                shift
+                recovery_point=$1
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    if [[ -z "$recovery_datetime" ]] && [[ -z "$recovery_point" ]]; then
+        die "missing paramter: -t / -p"
+    fi
+
+
+    local this_basebackup_dir="$1"
+
+    # stop server if running
+    _pg_ctl status && _pg_ctl stop
+
+    # sync PGDATA with basebackup (with some exclusions)
+    # NOTE: pg_xlog is synced with basebackup
+    rsync --delete -azc --exclude "pg_replslot/*" \
+                        --exclude "postmaster.pid" \
+                        --exclude "postmaster.opts" \
+                        --exclude "peer" \
+                        "$this_basebackup_dir/" "$PGDATA"
+    # rsync will preserve permission of sending side, even for the top level directory of receiving side
+    # while we should guarantee $PGDATA is not gourp or world-wide accessable
+    chmod 700 "$PGDATA"
+
+    # create an recovery.conf file to do pitr
+    recovery_file="$PGDATA/recovery.conf"
+    [[ -f "$recovery_file" ]] || su postgres -c "touch $recovery_file"
+    cat << EOF > "$recovery_file"
+restore_command = 'cp $ARCHIVE_DIR/%f %p'
+recovery_target_timeline = latest
+EOF
+    if [[ -n "$recovery_point" ]]; then
+        echo "recovery_target_name = '$recovery_point'" >> "$recovery_file"
+    else
+        echo "recovery_target_time = '$recovery_datetime'" >> "$recovery_file"
+    fi
+
+    _pg_ctl start -w -l "$PGDATA"/start.log
+}
+
+#########################################################################
+# action: nearest_basebackup
+#########################################################################
+
+usage_nearest_basebackup() {
+    cat << EOF
+Usage: nearest_basebackup [option] [-t datetime | -p recover_point]
+
+Description: find nearest basebackup against specified datetime or recovery point (created beforehead)
+
+Options:
+
+    -h, --help
+    -t datetime                         recover to datetime specified
+    -p recover_point                    recover to recovery point specified (which is created before head)
+EOF
+}
+
+do_nearest_basebackup() {
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_recover 
+                exit 1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -t)
+                shift
+                recovery_datetime=$1
+                ;;
+            -p)
+                shift
+                recovery_point=$1
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    if [[ -z "$recovery_datetime" ]] && [[ -z "$recovery_point" ]]; then
+        die "missing paramter: -t / -p"
+    fi
+    if [[ -n "$recovery_point" ]]; then
+        if ! ts=$(grep "$recovery_point" "$RUNTIME_INFO_RECOVERY_POINT_MAP_FILE" | cut -d, -f 2); then
+            die "failed to get timestamp of recovery point: $recovery_point"
+        fi
+    else
+        ts=$(date -d "$recovery_datetime" +%s)
+    fi
+
+    nearest_basebackup_timestamp=0
+    while IFS= read -r -d '' candidate; do
+        candidate=$(basename "$candidate")
+        [[ $candidate -gt "$ts" ]] && break
+        if [[ "$(echo "$ts - $candidate" | bc -l)" -lt "$(echo "$ts - $nearest_basebackup_timestamp" | bc -l)" ]]; then
+            nearest_basebackup_timestamp="$candidate"
+        fi
+    done < <(find "$BASEBACKUP_DIR"/* -maxdepth 0 -type d -print0 | sort -z)
+    [[ "$nearest_basebackup_timestamp" = 0 ]] && die
+
+    echo "$BASEBACKUP_DIR/$nearest_basebackup_timestamp"
 }

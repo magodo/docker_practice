@@ -38,11 +38,6 @@ do_stop() {
 
 do_basebackup() {
     id=$(uuid)
-    while [[ -d "$BACKUP_BASEBACKUP_DIR/$id" ]]; do
-        id=$(uuid)
-
-    done
-
     local counter=0
 
     ## test purpose
@@ -116,7 +111,6 @@ recovery_target_name = '${id}'
 EOF
     chown postgres:postgres $PGDATA/recovery.conf
 
-    diff -r $PGDATA $basebackup_dir > /tmp/diff.log
     # start server
     _pg_ctl start
 }

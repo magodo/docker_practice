@@ -69,6 +69,15 @@ main() {
         "sync_switch")
             do_sync_switch "$@"
             ;;
+        "basebackup")
+            do_basebackup "$@"
+            ;;
+        "recover")
+            do_recover "$@"
+            ;;
+        "nearest_basebackup")
+            do_nearest_basebackup "$@"
+            ;;
         *)
             die "Unknwon action: $action!"
             ;;

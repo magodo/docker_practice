@@ -2,23 +2,31 @@ version: "3.6"
 
 x-service:
     &default-service
-    image: "pg"
     tty: true
     stdin_open: true
-    ports:
-        - "5432"
     volumes:
         - type: bind
           source: ./scripts
           target: ${SCRIPT_ROOT}
           read_only: true
+        - type: volume
+          source: backup
+          target: ${BACKUP_ROOT}
     env_file: .env
 
 services:
+    # just for manipulating the volume
+    p0:
+        <<: *default-service
+        image: "pg-base"
+
     # the primary cluster (but might switch)
     p1:
         <<: *default-service
+        image: "pg"
         hostname: p1
+        ports:
+            - "5432"
         networks:
             internal_net:
             external_net:
@@ -27,6 +35,9 @@ services:
     # the secondary cluster (but might switch)
     p2:
         <<: *default-service
+        image: "pg"
+        ports:
+            - "5432"
         hostname: p2
         networks:
             internal_net:
@@ -42,3 +53,6 @@ networks:
         ipam:
             config:
                 - subnet: "${SUBNET}"
+
+volumes:
+  backup:
