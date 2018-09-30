@@ -198,10 +198,27 @@ Failover && Failback
 最后，在完成实践后关闭容器和相关的资源（网络，存储）：
 
     💤  ha [master] ⚡  cd DockerComposes/ha
-    💤  ha [master] ⚡  docker-compose down
+    💤  ha [master] ⚡  docker-compose down -v
     Stopping ha_p2_1 ... done        
     Stopping ha_p1_1 ... done        
     Removing ha_p2_1 ... done        
     Removing ha_p1_1 ... done        
     Removing network ha_internal_net 
     Removing network ha_external_net 
+
+HA fpitr
+---
+
+依然使用高可用的docker compose文件创建环境：在*Dockerfiles/ha*目录下执行以下指令启动两个服务：
+
+    💤  ha [master] ⚡  cd DockerComposes/ha
+    💤  ha [master] ⚡  docker-compose up -d
+
+脚本也是基于高可用容灾的那一套，只是根据归档目的地址为独立的volume还是容器内部，分为两套代码：
+
+- ha-pitr-archive-external: 将wal归档至独立的docker volume
+- ha-pitr-archive-local: 将wal归档至容器内PGDATA下的某个目录(archive)（当然更好的做法是放到PGDATA外，我这么做只是想加大难度而已- -）
+
+在执行脚本前，在*scripts*目录下创建一个名为*ha*的symlink指向你想使用的版本的脚本目录.
+
+支持恢复至某个时间，也支持恢复到备份点，同时保证容灾以后依然可以恢复。
