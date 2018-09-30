@@ -13,8 +13,10 @@
 VIP=172.255.255.254
 SUBNET=172.255.255.0/24
 SCRIPT_ROOT=/opt/scripts
+HA_SCRIPT_ROOT=/opt/scripts/ha
 BACKUP_ROOT=/mnt/backup
 ARCHIVE_DIR=$BACKUP_ROOT/archive
+ARCHIVE_DIR_LOCAL=$PGDATA/archive
 BASEBACKUP_DIR=$BACKUP_ROOT/basebackup
 
 # store runtime info, should be replaced by DB

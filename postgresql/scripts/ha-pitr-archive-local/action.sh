@@ -13,8 +13,6 @@ MYNAME="$(basename "${BASH_SOURCE[0]}")"
 # shellcheck disable=SC1090
 . "$MYDIR"/../config.sh
 
-ARCHIVE_DIR=$PGDATA/archive
-
 #########################################################################
 # action: start
 #########################################################################
@@ -171,7 +169,7 @@ do_setup_primary() {
     sed -i 's;#wal_log_hints = off;wal_log_hints = on;' "${PGDATA}"/postgresql.conf
     sed -i 's;#wal_keep_segments = 0;wal_keep_segments = 64;' "${PGDATA}"/postgresql.conf
     sed -i 's;#archive_mode = off;archive_mode = always;' "${PGDATA}"/postgresql.conf
-    sed -i "s;#archive_command = '';archive_command = '[[ -f $ARCHIVE_DIR/%f ]] || cp %p $ARCHIVE_DIR/%f';" "${PGDATA}"/postgresql.conf
+    sed -i "s;#archive_command = '';archive_command = '$HA_SCRIPT_ROOT/archive_command.sh %f %p';" "${PGDATA}"/postgresql.conf
 
     # sync replication
     [[ -n $is_sync ]] && sed -i "s;^#synchronous_standby_names.*;synchronous_standby_names = 'app_$peer';" "${PGDATA}"/postgresql.conf
@@ -232,6 +230,7 @@ EOF
     # this is just to provide an easy way for client to access db via vip, test purpose only
     line_in_file "host    all              postgres          0.0.0.0/0          trust" "${PGDATA}"/pg_hba.conf
     line_in_file "local   replication      all                                  trust" "${PGDATA}"/pg_hba.conf
+    line_in_file "host    replication      all               0.0.0.0/0          md5" "${PGDATA}"/pg_hba.conf
 }
 
 do_setup_standby() {
@@ -262,7 +261,7 @@ do_setup() {
     _pg_ctl status &>/dev/null && die "please stop pg first before any setup"
 
     # create archive dir
-    [[ -d "$ARCHIVE_DIR" ]] || { mkdir -p "$ARCHIVE_DIR"; chown postgres:postgres "$ARCHIVE_DIR"; }
+    [[ -d "$ARCHIVE_DIR_LOCAL" ]] || { mkdir -p "$ARCHIVE_DIR_LOCAL"; chown postgres:postgres "$ARCHIVE_DIR_LOCAL"; }
 
     local role peer
     local sync_opt="--async"
@@ -591,14 +590,37 @@ do_recover() {
     # create an recovery.conf file to do pitr
     recovery_file="$PGDATA/recovery.conf"
     [[ -f "$recovery_file" ]] || su postgres -c "touch $recovery_file"
-    cat << EOF > "$recovery_file"
-restore_command = 'cp $ARCHIVE_DIR/%f %p'
-recovery_target_timeline = latest
-EOF
+    echo "restore_command = '$HA_SCRIPT_ROOT/restore_command.sh %f %p'" >> "$recovery_file"
+
     if [[ -n "$recovery_point" ]]; then
+
+        # get timeline of this recovery point
+        if ! timeline=$(grep "$recovery_point" "$RUNTIME_INFO_RECOVERY_POINT_MAP_FILE" | cut -d, -f 2); then
+            die "failed to get timeline of recovery point: $recovery_point"
+        fi
+
+        echo "recovery_target_timeline = $timeline" >> "$recovery_file"
         echo "recovery_target_name = '$recovery_point'" >> "$recovery_file"
     else
-        echo "recovery_target_time = '$recovery_datetime'" >> "$recovery_file"
+        # get the active timeline at the specified recovery time
+        # TODO: use fast search algorithm instead
+        target_ts=$(date -d"$recovery_datetime" +%s)
+        nearest_ts=0
+        timeline=""
+        while IFS= read -r -d '' candidate; do
+            candidate_archive=$(basename "$candidate")
+            this_ts="${candidate_archive%-*}"
+            [[ $this_ts -gt "$target_ts" ]] && break
+            if [[ "$(echo "$target_ts - $this_ts" | bc -l)" -lt "$(echo "$target_ts - $nearest_ts" | bc -l)" ]]; then
+                nearest_ts="$this_ts"
+                archive_file_name="${candidate_archive#*-}"
+                timeline="${archive_file_name:0:8}"
+            fi
+        done < <(find "$ARCHIVE_DIR_LOCAL"/* -maxdepth 0 -type f -print0 | sort -z)
+        [[ -z "$timeline" ]] && die "can't find active timeline at time: $recovery_datetime"
+
+        echo "recovery_target_timeline = $timeline" >> "$recovery_file"
+        echo "recovery_target_time = '$recovery_datetime'" >> "$recovery_file" # pg timestamp follows ISO8601
     fi
 
     _pg_ctl start -w -l "$PGDATA"/start.log
@@ -652,7 +674,7 @@ do_nearest_basebackup() {
         die "missing paramter: -t / -p"
     fi
     if [[ -n "$recovery_point" ]]; then
-        if ! ts=$(grep "$recovery_point" "$RUNTIME_INFO_RECOVERY_POINT_MAP_FILE" | cut -d, -f 2); then
+        if ! ts=$(grep "$recovery_point" "$RUNTIME_INFO_RECOVERY_POINT_MAP_FILE" | cut -d, -f 3); then
             die "failed to get timestamp of recovery point: $recovery_point"
         fi
     else
@@ -671,3 +693,4 @@ do_nearest_basebackup() {
 
     echo "$BASEBACKUP_DIR/$nearest_basebackup_timestamp"
 }
+

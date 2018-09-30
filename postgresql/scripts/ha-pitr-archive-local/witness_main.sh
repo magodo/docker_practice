@@ -281,8 +281,10 @@ do_recover() {
                 ;;
             -t)
                 shift
-                point_options=("-t" "$1")
-                recovery_datetime=$1
+                # change datetime to pg timestamp format, also we make use of the calling system's timezone info
+                # to deduce timezone, otherwise it might (likely) be an un-initialized timezone in docker env.
+                recovery_datetime="$(date -d"$1" "+%F %T %:z")"
+                point_options=("-t" "$recovery_datetime")
                 ;;
             -p)
                 shift
@@ -355,10 +357,13 @@ do_create_recovery_point() {
 
     local name=$1
     psql -d "postgresql://$SUPER_USER:$SUPER_PASSWD@$VIP" -c "select pg_create_restore_point('$name')" || die "failed to create restore point"
-    
+
+    timeline="$(psql -d "user=$SUPER_USER password=$SUPER_PASSWD host=$VIP dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;" -A -t -F' ' | awk '{print $2}')"
+    info "current timeline: $timeline"
+
     # insert a mapping from name -> timestamp
     # this is because when recovering by restore point, we still need the timestamp to find the nearest baseabckup
-    docker exec ha_p0_1 bash -c "echo $name,$(date +%s) >> $RUNTIME_INFO_RECOVERY_POINT_MAP_FILE"
+    docker exec ha_p0_1 bash -c "echo $name,$timeline,$(date +%s) >> $RUNTIME_INFO_RECOVERY_POINT_MAP_FILE"
 }
 
 
