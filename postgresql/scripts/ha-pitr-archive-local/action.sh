@@ -169,7 +169,8 @@ do_setup_primary() {
     sed -i 's;#wal_log_hints = off;wal_log_hints = on;' "${PGDATA}"/postgresql.conf
     sed -i 's;#wal_keep_segments = 0;wal_keep_segments = 64;' "${PGDATA}"/postgresql.conf
     sed -i 's;#archive_mode = off;archive_mode = always;' "${PGDATA}"/postgresql.conf
-    sed -i "s;#archive_command = '';archive_command = '$HA_SCRIPT_ROOT/archive_command.sh %f %p';" "${PGDATA}"/postgresql.conf
+    #sed -i "s;#archive_command = '';archive_command = '$HA_SCRIPT_ROOT/archive_command.sh %f %p';" "${PGDATA}"/postgresql.conf
+    sed -i "s;#archive_command = '';archive_command = 'cp %p $ARCHIVE_DIR_LOCAL/%f';" "${PGDATA}"/postgresql.conf
 
     # sync replication
     [[ -n $is_sync ]] && sed -i "s;^#synchronous_standby_names.*;synchronous_standby_names = 'app_$peer';" "${PGDATA}"/postgresql.conf
@@ -516,7 +517,6 @@ do_basebackup() {
     chown postgres:postgres "$this_basebackup_dir"
 
     _pg_basebackup -D "$this_basebackup_dir" -X stream -h /tmp || die "failed to do basebackup"
-    #_pg_basebackup -D "$this_basebackup_dir" -h /tmp || die "failed to do basebackup"
 }
 
 #########################################################################
@@ -590,7 +590,9 @@ do_recover() {
     # create an recovery.conf file to do pitr
     recovery_file="$PGDATA/recovery.conf"
     [[ -f "$recovery_file" ]] || su postgres -c "touch $recovery_file"
-    echo "restore_command = '$HA_SCRIPT_ROOT/restore_command.sh %f %p'" >> "$recovery_file"
+
+    #echo "restore_command = '$HA_SCRIPT_ROOT/restore_command.sh %f %p'" >> "$recovery_file"
+    echo "restore_command = 'cp $ARCHIVE_DIR_LOCAL/%f %p'" >> "$recovery_file"
 
     if [[ -n "$recovery_point" ]]; then
 
@@ -605,18 +607,12 @@ do_recover() {
         # get the active timeline at the specified recovery time
         # TODO: use fast search algorithm instead
         target_ts=$(date -d"$recovery_datetime" +%s)
-        nearest_ts=0
-        timeline=""
-        while IFS= read -r -d '' candidate; do
-            candidate_archive=$(basename "$candidate")
-            this_ts="${candidate_archive%-*}"
+        timeline=1
+        while IFS= read -r this_ts; do
             [[ $this_ts -gt "$target_ts" ]] && break
-            if [[ "$(echo "$target_ts - $this_ts" | bc -l)" -lt "$(echo "$target_ts - $nearest_ts" | bc -l)" ]]; then
-                nearest_ts="$this_ts"
-                archive_file_name="${candidate_archive#*-}"
-                timeline="${archive_file_name:0:8}"
-            fi
-        done < <(find "$ARCHIVE_DIR_LOCAL"/* -maxdepth 0 -type f -print0 | sort -z)
+            ((timeline++))
+        done < "$RUNTIME_INFO_RECOVERY_HISTORY_FILE"
+
         [[ -z "$timeline" ]] && die "can't find active timeline at time: $recovery_datetime"
 
         echo "recovery_target_timeline = $timeline" >> "$recovery_file"

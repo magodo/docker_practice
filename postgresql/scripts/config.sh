@@ -22,6 +22,9 @@ BASEBACKUP_DIR=$BACKUP_ROOT/basebackup
 # store runtime info, should be replaced by DB
 RUNTIME_INFO_RECOVERY_POINT_MAP_FILE=$BACKUP_ROOT/pg_recovery_point_mapping.txt
 
+# restore each recovery time, the line # is the time line ID (starts from 1)
+RUNTIME_INFO_RECOVERY_HISTORY_FILE=$BACKUP_ROOT/pg_recovery_history.txt
+
 #########################################################################
 # REPLICATION
 #########################################################################

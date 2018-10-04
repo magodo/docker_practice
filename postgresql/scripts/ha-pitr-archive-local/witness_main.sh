@@ -134,6 +134,9 @@ do_failover() {
     docker network connect --ip "$VIP" ${project}_external_net "$standby"
 
     docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh promote
+
+    info "insert recover time record"
+    docker exec ha_p0_1 bash -c "echo $(date +%s) >> $RUNTIME_INFO_RECOVERY_HISTORY_FILE"
 }
 
 #########################################################################
@@ -312,6 +315,11 @@ do_recover() {
 
     info "recover for primary db"
     docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir" || die "failed to recover for primary"
+
+    if [[ -n "$recovery_datetime" ]]; then
+        info "insert recover time record"
+        docker exec ha_p0_1 bash -c "echo $(date +%s) >> $RUNTIME_INFO_RECOVERY_HISTORY_FILE"
+    fi
 
     info "remake standby"
     primary_host=$(docker exec "$primary" hostname)
