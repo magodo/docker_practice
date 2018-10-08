@@ -222,3 +222,165 @@ HA fpitr
 在执行脚本前，在*scripts*目录下创建一个名为*ha*的symlink指向你想使用的版本的脚本目录.
 
 支持恢复至某个时间，也支持恢复到备份点，同时保证容灾以后依然可以恢复。
+
+### 归档至本地
+
+首先，在*script*目录下创建一个名为*ha*的symlink指向*ha-pitr-archive-local*:
+
+    💤  scripts [master] ⚡  ln -s ha-pitr-archive-local ha
+
+然后，启动高可用：
+
+    💤  ha [master] ⚡  cd DockerComposes/ha
+    💤  ha [master] ⚡  docker-compose up -d
+
+    💤  ha-pitr-archive-local [master] ./witness_main.sh start -i ha_p1_1 ha_p2_1 
+    waiting for server to start.... done                                          
+    server started                                                                
+    DO                                                                            
+    DO                                                                            
+    DO                                                                            
+    waiting for server to shut down.... done                                      
+    server stopped                                                                
+    NOTICE:  pg_stop_backup complete, all required WAL segments have been archived
+
+然后，我们通过psql连接到当前主库：
+
+    💤  ha [master] ⚡  psql -d "postgresql://postgres:123@172.255.255.254" 
+
+并且创建一个表，并且插入数据（每次插入数据前记录当前时间戳）：
+
+    postgres=# create table a (i int);
+    CREATE TABLE
+    postgres=# insert into a values(1);                 --- time: ai1
+    INSERT 0 1
+    postgres=# insert into a values(2);                 --- time: ai2
+    INSERT 0 1
+
+然后，可以模拟一次容灾，并且尝试在容灾后的新主库上恢复到时间点**ai1**。但是，需要注意的是由于PITR是基于归档的wal，而当前的wal（包括上述两句插入SQL）可能还未被归档，如果直接容灾，那么无法恢复到指定的时间点（而是恢复到更早的点）。因此，在这之前我们先手动switch wal：
+
+    postgres=# select pg_current_xlog_location();
+     pg_current_xlog_location
+     --------------------------
+      0/50160D0
+      (1 row)
+
+然后，容灾：
+
+    💤  ha-pitr-archive-local [master] ./witness_main.sh failover -p ha ha_p1_1 ha_p2_1 
+    server promoting                                                                    
+    /var/run/postgresql:5432 - rejecting connections                                    
+    /var/run/postgresql:5432 - accepting connections                                    
+    DO                                                                                  
+    insert recover time record                                                          
+    💤  ha-pitr-archive-local [master] ./witness_main.sh failback ha_p1_1               
+    waiting for server to shut down.... done                                            
+    server stopped                                                                      
+    servers diverged at WAL position 0/6000060 on timeline 1                            
+    rewinding from last common checkpoint at 0/4000060 on timeline 1                    
+    Done!                                                                               
+
+恢复到**ai1**:
+
+    💤  ha-pitr-archive-local [master] ⚡  ./witness_main.sh recover -t "$ai1" ha_p2_1 ha_p1_1      
+    find nearest basebackup...                                                                      
+    nearest basebackup is: /mnt/backup/basebackup/1538977186                                        
+    recover for primary db                                                                          
+    pg_ctl: server is running (PID: 240)                                                            
+    /usr/pgsql-9.6/bin/postgres                                                                     
+    waiting for server to shut down.... done                                                        
+    server stopped                                                                                  
+    waiting for server to start.... done                                                            
+    server started                                                                                  
+    insert recover time record                                                                      
+    remake standby                                                                                  
+    waiting for server to shut down......... done                                                   
+    server stopped                                                                                  
+    NOTICE:  pg_stop_backup complete, all required WAL segments have been archived                  
+
+检查DB内容是否如我们所期待的：
+
+    postgres=# select * from a;
+     i
+     ---
+      1
+     (1 row)
+
+接着，尝试重复恢复（re-recovery）。插入新的数据：
+
+    postgres=# insert into a values(3);             --- time: ai3
+    INSERT 0 1
+
+恢复到**ai2**:
+
+    💤  ha-pitr-archive-local [master] ⚡  ./witness_main.sh recover -t "$ai2" ha_p2_1 ha_p1_1 
+    find nearest basebackup...                                                                 
+    nearest basebackup is: /mnt/backup/basebackup/1538977186                                   
+    recover for primary db                                                                     
+    pg_ctl: server is running (PID: 305)                                                       
+    /usr/pgsql-9.6/bin/postgres                                                                
+    waiting for server to shut down.... done                                                   
+    server stopped                                                                             
+    waiting for server to start.... done                                                       
+    server started                                                                             
+    insert recover time record                                                                 
+    remake standby                                                                             
+    waiting for server to shut down......... done                                              
+    server stopped                                                                             
+    NOTICE:  pg_stop_backup complete, all required WAL segments have been archived             
+
+检查：
+
+    postgres=# select * from a;
+     i
+    ---
+     1
+     2
+    (2 rows)
+
+然后，再次恢复回到**ai3**:
+
+    💤  ha-pitr-archive-local [master] ⚡  ./witness_main.sh recover -t "$ai3" ha_p2_1 ha_p1_1
+    find nearest basebackup...                                                                
+    nearest basebackup is: /mnt/backup/basebackup/1538977186                                  
+    recover for primary db                                                                    
+    pg_ctl: server is running (PID: 373)                                                      
+    /usr/pgsql-9.6/bin/postgres                                                               
+    waiting for server to shut down.... done                                                  
+    server stopped                                                                            
+    waiting for server to start.... done                                                      
+    server started                                                                            
+    insert recover time record                                                                
+    remake standby                                                                            
+    waiting for server to shut down......... done                                             
+    server stopped                                                                            
+    NOTICE:  pg_stop_backup complete, all required WAL segments have been archived            
+
+检查：
+
+    postgres=# select * from a;
+     i
+    ---
+     1
+     3
+    (2 rows)
+
+上述时间线如下所示：
+
+             A     B
+    BASE-----+-----+------o1 (recover to A)                              1
+             |     |           C
+             +.....|.......----+---o2 (regret, recover to B)             2
+                   |           |    
+                   +...........|..------o3 (regret again, recover to C)  3
+                               | 
+                               +........----                             4
+
+
+    Legend:
+
+       BASE: basebackup
+       A-Z: recovery point
+       ---: active wal histroy (continuous among branches)
+       ...: inactive wal history
+       oN: point to do PITR
