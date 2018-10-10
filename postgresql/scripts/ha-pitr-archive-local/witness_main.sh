@@ -313,6 +313,9 @@ do_recover() {
     this_basebackup_dir="$(docker exec ha_p0_1 "$SCRIPT_ROOT"/ha/main.sh nearest_basebackup "${point_options[@]}")" || die  "can't find any basebackup earliear than specified recover time/point: ${point_options[*]}"
     info "nearest basebackup is: $this_basebackup_dir"
 
+    info "stop standby db"
+    docker exec $standby "$SCRIPT_ROOT"/ha/main.sh stop
+
     info "recover for primary db"
     docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir" || die "failed to recover for primary"
 
@@ -323,8 +326,6 @@ do_recover() {
 
     info "remake standby"
     primary_host=$(docker exec "$primary" hostname)
-    # setup standby needs a running primary (for basebackup)
-    docker exec $standby "$SCRIPT_ROOT"/ha/main.sh stop
     docker exec $standby "$SCRIPT_ROOT"/ha/main.sh setup -r standby -p "$primary_host"
     docker exec $standby "$SCRIPT_ROOT"/ha/main.sh start
 }

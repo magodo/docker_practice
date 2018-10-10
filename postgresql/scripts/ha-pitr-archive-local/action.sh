@@ -169,8 +169,10 @@ do_setup_primary() {
     sed -i 's;#wal_log_hints = off;wal_log_hints = on;' "${PGDATA}"/postgresql.conf
     sed -i 's;#wal_keep_segments = 0;wal_keep_segments = 64;' "${PGDATA}"/postgresql.conf
     sed -i 's;#archive_mode = off;archive_mode = always;' "${PGDATA}"/postgresql.conf
-    #sed -i "s;#archive_command = '';archive_command = '$HA_SCRIPT_ROOT/archive_command.sh %f %p';" "${PGDATA}"/postgresql.conf
-    sed -i "s;#archive_command = '';archive_command = 'cp %p $ARCHIVE_DIR_LOCAL/%f';" "${PGDATA}"/postgresql.conf
+    sed -i "s;#archive_command = '';archive_command = '[[ -f $ARCHIVE_DIR_LOCAL/%f ]] || cp %p $ARCHIVE_DIR_LOCAL/%f';" "${PGDATA}"/postgresql.conf
+    sed -i "s;#hot_standby = off;hot_standby = on;" "${PGDATA}"/postgresql.conf
+    sed -i "s;#log_min_messages = warning;log_min_messages = debug2;" "${PGDATA}"/postgresql.conf
+    
 
     # sync replication
     [[ -n $is_sync ]] && sed -i "s;^#synchronous_standby_names.*;synchronous_standby_names = 'app_$peer';" "${PGDATA}"/postgresql.conf
@@ -605,21 +607,35 @@ do_recover() {
         echo "recovery_target_name = '$recovery_point'" >> "$recovery_file"
     else
         # get the active timeline at the specified recovery time
-        # TODO: use fast search algorithm instead
         target_ts=$(date -d"$recovery_datetime" +%s)
-        timeline=1
-        while IFS= read -r this_ts; do
-            [[ $this_ts -gt "$target_ts" ]] && break
-            ((timeline++))
-        done < "$RUNTIME_INFO_RECOVERY_HISTORY_FILE"
+        #timeline=1
+        #while IFS= read -r this_ts; do
+        #    [[ $this_ts -gt "$target_ts" ]] && break
+        #    ((timeline++))
+        #done < "$RUNTIME_INFO_RECOVERY_HISTORY_FILE"
 
-        [[ -z "$timeline" ]] && die "can't find active timeline at time: $recovery_datetime"
+        #[[ -z "$timeline" ]] && die "can't find active timeline at time: $recovery_datetime"
 
+        # find timeline from scratch
+        best_match_wal_path="$(search_wal_by_datetime "$recovery_datetime" "$ARCHIVE_DIR_LOCAL")"
+        if [[ -z "$best_match_wal_path" ]]; then
+            die "failed to find wal containing/just before specified datetime: $recovery_datetime"
+        fi
+        best_match_wal="$(basename "$best_match_wal_path")"
+        info "best match wal: $best_match_wal"
+
+        timeline="$(bc -l <<<"${best_match_wal:0:8}")"
         echo "recovery_target_timeline = $timeline" >> "$recovery_file"
+        #echo "recovery_target_timeline = 4" >> "$recovery_file"
         echo "recovery_target_time = '$recovery_datetime'" >> "$recovery_file" # pg timestamp follows ISO8601
     fi
 
+    # Because the hot_standby is always set to on, then after recovery (against the basebackup)
+    # the priamry will become a hot standby.
+    # Hence we will need to first set hot_standby to off, start DB, then set it back to on (just for code consistence).
+    sed -i "s;hot_standby = on;#hot_standby = on;" "${PGDATA}"/postgresql.conf
     _pg_ctl start -w -l "$PGDATA"/start.log
+    sed -i "s;#hot_standby = on;hot_standby = on;" "${PGDATA}"/postgresql.conf
 }
 
 #########################################################################

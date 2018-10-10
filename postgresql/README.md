@@ -206,7 +206,7 @@ Failover && Failback
     Removing network ha_internal_net 
     Removing network ha_external_net 
 
-HA fpitr
+HA PITR
 ---
 
 依然使用高可用的docker compose文件创建环境：在*Dockerfiles/ha*目录下执行以下指令启动两个服务：
@@ -256,14 +256,6 @@ HA fpitr
     INSERT 0 1
     postgres=# insert into a values(2);                 --- time: ai2
     INSERT 0 1
-
-然后，可以模拟一次容灾，并且尝试在容灾后的新主库上恢复到时间点**ai1**。但是，需要注意的是由于PITR是基于归档的wal，而当前的wal（包括上述两句插入SQL）可能还未被归档，如果直接容灾，那么无法恢复到指定的时间点（而是恢复到更早的点）。因此，在这之前我们先手动switch wal：
-
-    postgres=# select pg_current_xlog_location();
-     pg_current_xlog_location
-     --------------------------
-      0/50160D0
-      (1 row)
 
 然后，容灾：
 
