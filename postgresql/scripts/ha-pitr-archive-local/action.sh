@@ -237,16 +237,34 @@ EOF
 }
 
 do_setup_standby() {
+    while :; do
+        case $1 in
+            --no-basebackup)
+                no_basebackup=1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
     peer=$1
 
-    ##################################
-    # prepare basebackup
-    ##################################
-    rm -rf "${PGDATA}"
-    # NOTE: we explicitly disable wal from shipping from primary to standby during basebackup, we would like those wal are replicated later so that
-    #       all of the wal are archived (by defining `archive_mode` to `always`)
-    _pg_basebackup  -D "$PGDATA" -F p -c fast -d "postgresql://$REPL_USER:$REPL_PASSWD@$peer?application_name=app_$(hostname)"
-    # after basebackup, the cofig is synced from primary, which contains necessary configs for primary...
+    if [[ -z $no_basebackup ]]; then
+        ##################################
+        # prepare basebackup
+        ##################################
+        rm -rf "${PGDATA}"
+        # NOTE: we explicitly disable wal from shipping from primary to standby during basebackup, we would like those wal are replicated later so that
+        #       all of the wal are archived (by defining `archive_mode` to `always`)
+        _pg_basebackup  -D "$PGDATA" -F p -c fast -d "postgresql://$REPL_USER:$REPL_PASSWD@$peer?application_name=app_$(hostname)"
+    fi
+
+    # after recovery, the cofig is synced from primary, which contains necessary configs for primary...
     echo "$peer" > "$PEER_HOST_RECORD"
 
     ##################################
@@ -261,13 +279,13 @@ EOF
 }
 
 do_setup() {
-    _pg_ctl status &>/dev/null && die "please stop pg first before any setup"
+    _pg_ctl status &>/dev/null && _pg_ctl stop
 
     # create archive dir
     [[ -d "$ARCHIVE_DIR_LOCAL" ]] || { mkdir -p "$ARCHIVE_DIR_LOCAL"; chown postgres:postgres "$ARCHIVE_DIR_LOCAL"; }
 
     local role peer
-    local sync_opt="--async"
+    local deeper_opt=()
     while :; do
         case $1 in
             -h|--help)
@@ -291,7 +309,10 @@ do_setup() {
                 peer=${1#=*}
                 ;;
             --sync)
-                sync_opt='--sync'
+                is_sync=1
+                ;;
+            --no-basebackup)
+                no_basebackup=1
                 ;;
             --)
                 shift
@@ -309,10 +330,18 @@ do_setup() {
 
     case "$role" in
         primary)
-            do_setup_primary "$sync_opt" "$peer"
+            if [[ -n $is_sync ]]; then
+                deeper_opt+=("--sync")
+            else
+                deeper_opt+=("--async")
+            fi
+            do_setup_primary "${deeper_opt[@]}" "$peer"
             ;;
         standby)
-            do_setup_standby "$peer"
+            if [[ -n $no_basebackup ]]; then
+                deeper_opt+=("--no-basebackup")
+            fi
+            do_setup_standby "${deeper_opt[@]}" "$peer"
             ;;
     esac
 }

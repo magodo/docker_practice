@@ -37,10 +37,11 @@ log() {
             output_fd=([debug]=1 [info]=1 [warn]=2 [error]=2)
         fi
     fi
+
     if [[ $n_arg = 0 ]]; then
-        { echo -n ${level_color[$level]}; cat; echo -n ${normal}; }
+        { echo -n ${level_color[$level]}; echo -n "$LOG_PREFIX"; cat; echo -n ${normal}; }
     else
-        { echo -n ${level_color[$level]}; echo "$*"; echo -n ${normal}; }
+        { echo -n ${level_color[$level]}; echo -n "$LOG_PREFIX"; echo "$*"; echo -n ${normal}; }
     fi
 }
 
@@ -259,10 +260,21 @@ linear_search() {
                 return
                 ;;
             *)
-                # no time info exists in current wal, just skip
+                # no transaction info exists in current wal, just skip
                 ;;
         esac
     done
+
+    # if we get here, there are two cases:
+
+    # case 1. all wal are earlier than target time
+    if [[ -n $first_least_earlier_wal ]]; then
+        echo "$first_least_earlier_wal"
+        return
+    fi
+
+    # case 2. no any wal contains transaction
+    return 1
 }
 
 search_wal_by_datetime() {

@@ -313,11 +313,18 @@ do_recover() {
     this_basebackup_dir="$(docker exec ha_p0_1 "$SCRIPT_ROOT"/ha/main.sh nearest_basebackup "${point_options[@]}")" || die  "can't find any basebackup earliear than specified recover time/point: ${point_options[*]}"
     info "nearest basebackup is: $this_basebackup_dir"
 
-    info "stop standby db"
-    docker exec $standby "$SCRIPT_ROOT"/ha/main.sh stop
+    info "recover both primary and standby"
 
-    info "recover for primary db"
-    docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir" || die "failed to recover for primary"
+    # first ensure two DB are stop, if we do it in parallel, bad thing might happen
+    docker exec "$primary" "$SCRIPT_ROOT/ha/main.sh" stop
+    docker exec "$standby" "$SCRIPT_ROOT/ha/main.sh" stop
+
+    ( docker exec -e LOG_PREFIX="primary: " "$primary" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir") &
+    pid_1=$!
+    ( docker exec -e LOG_PREFIX="standby: " "$standby" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir") &
+    pid_2=$!
+    wait $pid_1 || die "failed to recover for primary"
+    wait $pid_2 || die "failed to recover for standby"
 
     if [[ -n "$recovery_datetime" ]]; then
         info "insert recover time record"
@@ -325,9 +332,16 @@ do_recover() {
     fi
 
     info "remake standby"
+
+    # we have to restart primary because we have to restart standby, then they are in the same baesline
+    # (whether primary restart first or standby restart first doesn't matter)
+    docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh stop
+    docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh start
+
     primary_host=$(docker exec "$primary" hostname)
-    docker exec $standby "$SCRIPT_ROOT"/ha/main.sh setup -r standby -p "$primary_host"
-    docker exec $standby "$SCRIPT_ROOT"/ha/main.sh start
+    docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh setup -r standby -p "$primary_host" --no-basebackup
+    docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh start
+
 }
 
 #########################################################################
