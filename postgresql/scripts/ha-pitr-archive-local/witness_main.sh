@@ -315,7 +315,10 @@ do_recover() {
 
     info "recover both primary and standby"
 
-    # first ensure two DB are stop, if we do it in parallel, bad thing might happen
+    # Do a graceful stop for HA, i.e., stop primary first, then stop standby. 
+    # In this case, it ensure the LSN of both are the same, and the WAL switch event
+    # of primary is sent to standby also, resulting into standby also switch the WAL,
+    # in other words, the archive of both are the same, then.
     docker exec "$primary" "$SCRIPT_ROOT/ha/main.sh" stop
     docker exec "$standby" "$SCRIPT_ROOT/ha/main.sh" stop
 
