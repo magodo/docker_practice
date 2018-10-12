@@ -134,9 +134,6 @@ do_failover() {
     docker network connect --ip "$VIP" ${project}_external_net "$standby"
 
     docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh promote
-
-    info "insert recover time record"
-    docker exec ha_p0_1 bash -c "echo $(date +%s) >> $RUNTIME_INFO_RECOVERY_HISTORY_FILE"
 }
 
 #########################################################################
@@ -322,29 +319,22 @@ do_recover() {
     docker exec "$primary" "$SCRIPT_ROOT/ha/main.sh" stop
     docker exec "$standby" "$SCRIPT_ROOT/ha/main.sh" stop
 
-    ( docker exec -e LOG_PREFIX="primary: " "$primary" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir") &
+    # we have to restart primary because we have to restart standby, then they are in the same LSN
+    ( docker exec -e LOG_PREFIX="primary: " "$primary" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir" && \
+      docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh stop && \
+      docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh start \
+    ) &
     pid_1=$!
-    ( docker exec -e LOG_PREFIX="standby: " "$standby" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir") &
+
+    ( docker exec -e LOG_PREFIX="standby: " "$standby" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir" && \
+      primary_host=$(docker exec "$primary" hostname) && \
+      docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh setup -r standby -p "$primary_host" --no-basebackup && \
+      docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh start \
+    ) &
     pid_2=$!
+
     wait $pid_1 || die "failed to recover for primary"
     wait $pid_2 || die "failed to recover for standby"
-
-    if [[ -n "$recovery_datetime" ]]; then
-        info "insert recover time record"
-        docker exec ha_p0_1 bash -c "echo $(date +%s) >> $RUNTIME_INFO_RECOVERY_HISTORY_FILE"
-    fi
-
-    info "remake standby"
-
-    # we have to restart primary because we have to restart standby, then they are in the same baesline
-    # (whether primary restart first or standby restart first doesn't matter)
-    docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh stop
-    docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh start
-
-    primary_host=$(docker exec "$primary" hostname)
-    docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh setup -r standby -p "$primary_host" --no-basebackup
-    docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh start
-
 }
 
 #########################################################################

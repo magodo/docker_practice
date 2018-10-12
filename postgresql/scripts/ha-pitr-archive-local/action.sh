@@ -637,15 +637,8 @@ do_recover() {
     else
         # get the active timeline at the specified recovery time
         target_ts=$(date -d"$recovery_datetime" +%s)
-        #timeline=1
-        #while IFS= read -r this_ts; do
-        #    [[ $this_ts -gt "$target_ts" ]] && break
-        #    ((timeline++))
-        #done < "$RUNTIME_INFO_RECOVERY_HISTORY_FILE"
 
-        #[[ -z "$timeline" ]] && die "can't find active timeline at time: $recovery_datetime"
-
-        # find timeline from scratch
+        # find timeline by comparing linearly against archived wal segments
         best_match_wal_path="$(search_wal_by_datetime "$recovery_datetime" "$ARCHIVE_DIR_LOCAL")"
         if [[ -z "$best_match_wal_path" ]]; then
             die "failed to find wal containing/just before specified datetime: $recovery_datetime"
@@ -655,7 +648,6 @@ do_recover() {
 
         timeline="$(bc -l <<<"${best_match_wal:0:8}")"
         echo "recovery_target_timeline = $timeline" >> "$recovery_file"
-        #echo "recovery_target_timeline = 4" >> "$recovery_file"
         echo "recovery_target_time = '$recovery_datetime'" >> "$recovery_file" # pg timestamp follows ISO8601
     fi
 
