@@ -758,12 +758,16 @@ do_tx_read_only() {
     local mode=$1
     [[ -z $mode ]] && die "missing parameter: mode"
 
+    # check whther mode has already been set
+    current_mode="$(_psql -A -c "show default_transaction_read_only" | sed -n 2p)"
+    [[ $current_mode = "$mode" ]] && exit
+
     # disable non-local connections
     sed -i -E 's/(host\s+all.+)/##\1/' "${PGDATA}"/pg_hba.conf
     _pg_ctl reload &> /dev/null || die "pg_ctl reload failed"
 
     # terminate outstanding connections 
-    cat << EOF | _psql
+    cat << EOF | _psql > /dev/null
 SELECT pg_terminate_backend(pid) 
 FROM pg_stat_activity 
 WHERE pid != pg_backend_pid()

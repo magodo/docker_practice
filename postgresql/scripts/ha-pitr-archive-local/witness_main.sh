@@ -425,6 +425,64 @@ do_tx_read_only() {
 }
 
 #########################################################################
+# role_switch
+#########################################################################
+usage_role_switch() {
+    cat << EOF
+Usage: role_switch [option] primary_container standby_container
+
+Options:
+    -h|--help			show this message
+EOF
+}
+
+do_role_switch() {
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_role_switch
+                exit 1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    local primary_container=$1
+    local standby_container=$2
+
+    # set primary as read-only
+    do_tx_read_only -s "$primary_container"
+
+    # wait standby sync with primary
+    primary_last_lsn=$(docker exec "$primary_container" su postgres -c 'psql -A -c "SELECT pg_current_xlog_location();"' | sed -n 2p)
+
+    retry=3
+    while [[ $retry -gt 0 ]]; do
+        lag=$(docker exec "$standby_container" su postgres -c "psql -A -c \"SELECT pg_xlog_location_diff('$primary_last_lsn', (SELECT pg_last_xlog_replay_location())) AS lag\"" | sed -n 2p)
+        [[ $lag -eq 0 ]] && break
+        ((retry--))
+        sleep 1
+    done
+
+    if [[ ! $lag -eq 0 ]]; then
+        # reset primary back to read-write
+        do_tx_read_only -S "$primary_container"
+        die "can't switch role, because standby is not sync with primary"
+    fi
+
+    # promote and rewind
+    do_failover -p ha "$primary_container" "$standby_container"
+    do_failback "$primary_container"
+}
+
+#########################################################################
 # main
 #########################################################################
 
@@ -444,6 +502,7 @@ Actions:
     recover                         point-in-time recovery
     create_recovery_point           create a recovery point (used to do pitr later)
     tx_read_only                    set/reset transaction read-only mode in cluster-wide
+    role_switch                     siwtch primary and standby roles
 EOF
 }
 
@@ -493,6 +552,9 @@ main() {
             ;;
         "tx_read_only")
             do_tx_read_only "$@"
+            ;;
+        "role_switch")
+            do_role_switch "$@"
             ;;
         *)
             die "Unknwon action: $action!"
