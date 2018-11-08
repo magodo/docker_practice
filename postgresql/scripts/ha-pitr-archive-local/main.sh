@@ -26,6 +26,7 @@ Actions:
     promote         Promote a standby into primary
     rewind          Rewind a previous primary into standby following the new primary 
     sync_switch     Switch replication mode between sync and async on primary
+    tx_read_only    Set/reset transaction read-only mode in cluster-wide
 EOF
 }
 
@@ -77,6 +78,9 @@ main() {
             ;;
         "nearest_basebackup")
             do_nearest_basebackup "$@"
+            ;;
+        "tx_read_only")
+            do_tx_read_only "$@"
             ;;
         *)
             die "Unknwon action: $action!"

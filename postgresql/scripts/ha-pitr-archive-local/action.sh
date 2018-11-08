@@ -231,7 +231,7 @@ EOF
     line_in_file "host    all              ${SUPER_USER}     0.0.0.0/0          md5" "${PGDATA}"/pg_hba.conf
     # this allow user "postgres" to access all db without password,
     # this is just to provide an easy way for client to access db via vip, test purpose only
-    line_in_file "host    all              postgres          0.0.0.0/0          trust" "${PGDATA}"/pg_hba.conf
+    #line_in_file "host    all              postgres          0.0.0.0/0          trust" "${PGDATA}"/pg_hba.conf
     line_in_file "local   replication      all                                  trust" "${PGDATA}"/pg_hba.conf
     line_in_file "host    replication      all               0.0.0.0/0          md5" "${PGDATA}"/pg_hba.conf
 }
@@ -635,9 +635,6 @@ do_recover() {
         echo "recovery_target_timeline = $timeline" >> "$recovery_file"
         echo "recovery_target_name = '$recovery_point'" >> "$recovery_file"
     else
-        # get the active timeline at the specified recovery time
-        target_ts=$(date -d"$recovery_datetime" +%s)
-
         # find timeline by comparing linearly against archived wal segments
         best_match_wal_path="$(search_wal_by_datetime "$recovery_datetime" "$ARCHIVE_DIR_LOCAL")"
         if [[ -z "$best_match_wal_path" ]]; then
@@ -727,3 +724,56 @@ do_nearest_basebackup() {
     echo "$BASEBACKUP_DIR/$nearest_basebackup_timestamp"
 }
 
+
+#########################################################################
+# action: tx_read_only 
+#########################################################################
+usage_tx_read_only() {
+    cat << EOF
+Usage: tx_read_only [option] on|off
+
+Options:
+    -h|--help			show this message
+EOF
+}
+
+do_tx_read_only() {
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_tx_read_only
+                exit 1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    local mode=$1
+    [[ -z $mode ]] && die "missing parameter: mode"
+
+    # disable non-local connections
+    sed -i -E 's/(host\s+all.+)/##\1/' "${PGDATA}"/pg_hba.conf
+    _pg_ctl reload &> /dev/null || die "pg_ctl reload failed"
+
+    # terminate outstanding connections 
+    cat << EOF | _psql
+SELECT pg_terminate_backend(pid) 
+FROM pg_stat_activity 
+WHERE pid != pg_backend_pid()
+EOF
+    
+    # turn on/off tx read-only
+    sed -i -E "s/.*(default_transaction_read_only = ).*/\\1$mode/" "$PGDATA"/postgresql.conf
+    _pg_ctl reload &> /dev/null || die "pg_ctl reload failed"
+
+    # restore non-local connection access
+    sed -i -E 's/##(host\s+all.+)/\1/' "${PGDATA}"/pg_hba.conf
+    _pg_ctl reload &> /dev/null || die "pg_ctl reload failed"
+}

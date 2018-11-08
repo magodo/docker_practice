@@ -19,11 +19,13 @@ services:
     p0:
         <<: *default-service
         image: "pg-base"
+        container_name: ha_p0_1
 
     # the primary cluster (but might switch)
     p1:
         <<: *default-service
         image: "pg"
+        container_name: ha_p1_1
         hostname: p1
         ports:
             - "5432"
@@ -36,6 +38,7 @@ services:
     p2:
         <<: *default-service
         image: "pg"
+        container_name: ha_p2_1
         ports:
             - "5432"
         hostname: p2

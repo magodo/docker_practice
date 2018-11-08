@@ -382,6 +382,47 @@ do_create_recovery_point() {
     docker exec ha_p0_1 bash -c "echo $name,$timeline,$(date +%s) >> $RUNTIME_INFO_RECOVERY_POINT_MAP_FILE"
 }
 
+#########################################################################
+# tx_read_only 
+#########################################################################
+usage_tx_read_only() {
+    cat << EOF
+Usage: tx_read_only [option] primary_container
+
+Options:
+    -h|--help			show this message
+    -s|-S               turn on/off transaction read-only mode
+EOF
+}
+
+do_tx_read_only() {
+    while :; do
+        case $1 in
+            -h|--help)
+                usage_tx_read_only
+                exit 1
+                ;;
+            -s)
+                mode=on
+                ;;
+            -S)
+                mode=off
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+
+    local primary_container=$1
+    [[ -z $mode ]] && die "please specify -s/-S option!"
+    docker exec "$primary_container" "$SCRIPT_ROOT"/ha/main.sh tx_read_only "$mode"
+}
 
 #########################################################################
 # main
@@ -401,7 +442,8 @@ Actions:
     sync_switch                     switch replication mode between sync and async
     basebackup                      do basebackup
     recover                         point-in-time recovery
-    create_recovery_point          create a recovery point (used to do pitr later)
+    create_recovery_point           create a recovery point (used to do pitr later)
+    tx_read_only                    set/reset transaction read-only mode in cluster-wide
 EOF
 }
 
@@ -448,6 +490,9 @@ main() {
             ;;
         "create_recovery_point")
             do_create_recovery_point "$@"
+            ;;
+        "tx_read_only")
+            do_tx_read_only "$@"
             ;;
         *)
             die "Unknwon action: $action!"
