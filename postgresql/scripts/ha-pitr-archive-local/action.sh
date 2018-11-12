@@ -381,13 +381,27 @@ do_promote() {
         shift
     done
 
-    _pg_ctl promote || die "promote failed"
+    # We don't use pg_ctl directly, per comment is pg_ctl.c:
+    #
+	#  > For 9.3 onwards, "fast" promotion is performed. Promotion with a full
+	#  > checkpoint is still possible by writing a file called
+	#  > "fallback_promote" instead of "promote"
+    #
+    # In this scenario, we need a promotion with check point, so we do it manually.
+    # (the reasone for check point is because during manual role switch, we will
+    #  invoke pg_rewind on old primary right after promoting the new primary, if
+    #  there is no check point made on promotion, when pg_rewind try to evaluate
+    #  the timeline where divergence occurs, it will ends up with an incorrect one)
+    su postgres -c "touch $PGDATA/fallback_promote"
+    postmaster_pid=$(head -n1 "$PGDATA/postmaster.pid") || die "failed to get postmaster's pid"
+    [[ -z "$postmaster_pid" ]] && die "empty postmaster's pid"
+    kill -SIGUSR1 "$postmaster_pid"
 
     # wait until promoted cluster is running (-w is available since pg-10)
     if ! timeout 10 bash -c '{
         while :; do
             pg_isready && exit 0
-            sleep 1
+            echo not ready; sleep 1
         done
     }'; then
         die "promoted cluster failed to accept connection"
@@ -453,7 +467,12 @@ do_rewind() {
     sed -i "s/host=$(hostname)/host=$peer/g" "$PGDATA"/recovery.conf
     sed -i "s/application_name=app_${peer}/application_name=app_$(hostname)/g" "$PGDATA"/recovery.conf
 
-    _pg_ctl start > /dev/null
+    _pg_ctl start -w -l "$PGDATA/start.log" || die "failed to start after rewind"
+
+    if ! is_in_recovery=$(_psql -A -c 'select pg_is_in_recovery();' | tee >(cat 1>&2) | sed -n 2p); then
+        die "failed to query whether server is in recovery"
+    fi
+    [[ $is_in_recovery = "t" ]] || die "rewinded server is not in recovery"
 }
 
 #########################################################################
