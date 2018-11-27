@@ -52,7 +52,7 @@ do_start() {
     # docker exec will hang if there is no EOF sent to docker-exec
     # from the forked postgres process, which means the docker-exec
     # is keeping reading from the pipe
-    _pg_ctl "${options[@]}" start > /dev/null
+    _pg_ctl start "${options[@]}" > /dev/null
 }
 
 #########################################################################
@@ -69,11 +69,15 @@ EOF
 }
 
 do_stop() {
+    local options=()
     while :; do
         case $1 in
             -h|--help)
                 usage_stop
                 exit 0
+                ;;
+            --smart)
+                options+=("-m" "smart")
                 ;;
             --)
                 shift
@@ -86,7 +90,7 @@ do_stop() {
         shift
     done
     
-    _pg_ctl stop
+    _pg_ctl stop "${options[@]}"
 }
 
 #########################################################################
@@ -621,7 +625,6 @@ do_recover() {
 
     local this_basebackup_dir="$1"
 
-
     # stop server if running
     _pg_ctl status && _pg_ctl stop
 
@@ -654,8 +657,12 @@ do_recover() {
         echo "recovery_target_timeline = $timeline" >> "$recovery_file"
         echo "recovery_target_name = '$recovery_point'" >> "$recovery_file"
     else
+        # identify the start_wal to parse, based on the backup_label
+        first_wal_needed="$(grep -oP '(?<=\(file ).+(?=\))' "$this_basebackup_dir/backup_label")"
+        [[ -z $first_wal_needed ]] && die "illegal first wal needed: $first_wal_needed"
+
         # find timeline by comparing linearly against archived wal segments
-        best_match_wal_path="$(search_wal_by_datetime "$recovery_datetime" "$ARCHIVE_DIR_LOCAL")"
+        best_match_wal_path="$(search_wal_by_datetime --start "$first_wal_needed" "$recovery_datetime" "$ARCHIVE_DIR_LOCAL")"
         if [[ -z "$best_match_wal_path" ]]; then
             die "failed to find wal containing/just before specified datetime: $recovery_datetime"
         fi

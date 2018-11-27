@@ -313,23 +313,37 @@ do_recover() {
     info "recover both primary and standby"
 
     # Do a graceful stop for HA, i.e., stop primary first, then stop standby. 
-    # In this case, it ensure the LSN of both are the same, and the WAL switch event
+    # In "most" case, it ensure the LSN of both are the same, and the WAL switch event
     # of primary is sent to standby also, resulting into standby also switch the WAL,
     # in other words, the archive of both are the same, then.
+    # The exception, see comment below...
     docker exec "$primary" "$SCRIPT_ROOT/ha/main.sh" stop
     docker exec "$standby" "$SCRIPT_ROOT/ha/main.sh" stop
 
+    # In case last recovery is just finished, then user made another recovery(in 3 seconds), the stops above is not guaranteed to do a wal switch on standby.
+    # I don't know the reason. But we definitely need to work around it here. The solution would be to sync the missing wal on standby from 
+    # primary, since each db is using its own wal and the primary's wal is always the latest one.
+    # Also suppose currently the standby is a bit lag against primary, it will need all the wal to do recovery.
+    # NOTE: this method is ugly because if the wal size is big, then it takes time!
+
+    #tempdir="$(docker exec "ha_p0_1" mktemp -d -p "$BACKUP_ROOT")"
+    #PGDATA=$(docker exec "$primary" bash -c 'eval "echo $PGDATA"')
+    #docker exec "$primary" rsync -avz --delete "$PGDATA/archive/" "$tempdir"
+    #docker exec "$standby" rsync -avz --delete "$tempdir/" "$PGDATA/archive"
+    #docker exec "ha_p0_1" rm -rf "$tempdir"
+    
     # we have to restart primary because we have to restart standby, then they are in the same LSN
     ( docker exec -e LOG_PREFIX="primary: " "$primary" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir" && \
       docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh stop && \
-      docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh start \
+      docker exec "$primary" "$SCRIPT_ROOT"/ha/main.sh start -w \
     ) &
     pid_1=$!
 
     ( docker exec -e LOG_PREFIX="standby: " "$standby" "$SCRIPT_ROOT"/ha/main.sh recover "${point_options[@]}" "$this_basebackup_dir" && \
       primary_host=$(docker exec "$primary" hostname) && \
+      docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh stop && \
       docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh setup -r standby -p "$primary_host" --no-basebackup && \
-      docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh start \
+      docker exec "$standby" "$SCRIPT_ROOT"/ha/main.sh start -w \
     ) &
     pid_2=$!
 

@@ -278,16 +278,44 @@ linear_search() {
 }
 
 search_wal_by_datetime() {
+    while :; do
+        case $1 in
+            --start|-s)
+                shift
+                start_wal=$1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
     t="$1"
     dir="$2"
 
     wals=()
     for f in "$dir"/*; do
         if [[ $(basename "$f") != *.* ]]; then
+            if [[ -n $start_wal ]] && [[ $start_wal > $(basename "$f") ]]; then
+                continue
+            fi
             wals+=("$f")
         fi
     done
-    linear_search "$t" "${wals[@]}"
+
+    # all wal under search contains no commit, just use the start wal if any
+    if ! linear_search "$t" "${wals[@]}"; then
+        if [[ -n $start_wal ]]; then
+            echo "$start_wal"
+        else
+            # otherwise, return error
+            return 1
+        fi
+    fi
 }
 
 #################################################################################################################################################################
