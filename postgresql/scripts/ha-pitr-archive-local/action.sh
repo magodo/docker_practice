@@ -283,11 +283,6 @@ EOF
 }
 
 do_setup() {
-    _pg_ctl status &>/dev/null && _pg_ctl stop
-
-    # create archive dir
-    [[ -d "$ARCHIVE_DIR_LOCAL" ]] || { mkdir -p "$ARCHIVE_DIR_LOCAL"; chown postgres:postgres "$ARCHIVE_DIR_LOCAL"; }
-
     local role peer
     local deeper_opt=()
     while :; do
@@ -331,6 +326,11 @@ do_setup() {
 
     [[ -z $role ]] && die "missing param: role"
     [[ -z $peer ]] && die "missing param: peer"
+
+    _pg_ctl status &>/dev/null && _pg_ctl stop
+
+    # create archive dir
+    [[ -d "$ARCHIVE_DIR_LOCAL" ]] || { mkdir -p "$ARCHIVE_DIR_LOCAL"; chown postgres:postgres "$ARCHIVE_DIR_LOCAL"; }
 
     case "$role" in
         primary)
@@ -429,8 +429,6 @@ EOF
 
 do_rewind() {
     # FIXME: add some guard
-
-    _pg_ctl status &>/dev/null && _pg_ctl -w stop
 
     while :; do
         case $1 in
