@@ -1,0 +1,47 @@
+version: "3.6"
+
+x-service:
+    &default-service
+    image: "mysql-base"
+    tty: true
+    stdin_open: true
+    ports:
+        - "3306"
+    volumes:
+        - type: bind
+          source: ./scripts
+          target: ${SCRIPT_ROOT}
+          read_only: true
+    env_file: .env
+
+services:
+
+    # the primary cluster (but might switch)
+    p1:
+        <<: *default-service
+        container_name: ha_p1_1
+        hostname: p1
+        networks:
+            internal_net:
+            external_net:
+                ipv4_address: "${VIP}"
+
+    # the secondary cluster (but might switch)
+    p2:
+        <<: *default-service
+        container_name: ha_p2_1
+        hostname: p2
+        networks:
+            internal_net:
+
+networks:
+    # internal network for replication
+    internal_net:
+        internal: true
+    # external interface, there is always only one ip (VIP) is set for 
+    # the backend, and is bound to the primary db.
+    external_net:
+        driver: bridge
+        ipam:
+            config:
+                - subnet: "${SUBNET}"
