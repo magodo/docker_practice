@@ -58,7 +58,7 @@ do_setup() {
 #########################################################################
 usage_start() {
     cat << EOF
-Usage: ./${MYNAME} [options] master_container slave_container
+Usage: ./${MYNAME} [options]
 
 Options:
     -h|--help			show this message
@@ -82,9 +82,6 @@ do_start() {
         esac
         shift
     done
-
-    local master=$1
-    local slave=$2
 
     info "start server"
     docker exec "ha_p1_1" "$SCRIPT_ROOT/dual-master/agent.sh" start || die "failed to start p1"
